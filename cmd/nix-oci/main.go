@@ -14,7 +14,10 @@ import (
 	"github.com/systemstart/nix-oci/internal/oci"
 )
 
-var version = "0.1.0"
+// version is the fallback for `go run`/`go build`. Release binaries get the real
+// version from the git tag (goreleaser's -X main.version), and Nix builds get it
+// from the flake's ldflags -- so this string is never hand-bumped per release.
+var version = "dev"
 
 func main() {
 	err := run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)

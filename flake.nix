@@ -23,19 +23,34 @@
 
           inherit go;
 
-          nix-oci = buildGoModule {
-            pname = "nix-oci";
-            version = "0.1.0";
-            src = ./.;
-            vendorHash = "sha256-RCPLKumngkBa+2p/d30kFKkcfOitEw6p+ECC2k9Lg10=";
+          nix-oci =
+            let
+              # The one cosmetic version knob: names the Nix package and stamps
+              # the binary (via ldflags). Decoupled from the release tag -- it
+              # never affects gsemver or the goreleaser artifacts, so bump it
+              # lazily.
+              version = "0.2.0";
+            in
+            buildGoModule {
+              pname = "nix-oci";
+              inherit version;
+              src = ./.;
+              vendorHash = "sha256-RCPLKumngkBa+2p/d30kFKkcfOitEw6p+ECC2k9Lg10=";
 
-            meta = {
-              description = "A native, deterministic OCI image layout writer for Nix";
-              homepage = "https://github.com/systemstart/nix-oci";
-              license = pkgs.lib.licenses.gpl3Only;
-              mainProgram = "nix-oci";
+              ldflags = [
+                "-s"
+                "-w"
+                "-X"
+                "main.version=${version}"
+              ];
+
+              meta = {
+                description = "A native, deterministic OCI image layout writer for Nix";
+                homepage = "https://github.com/systemstart/nix-oci";
+                license = pkgs.lib.licenses.gpl3Only;
+                mainProgram = "nix-oci";
+              };
             };
-          };
         });
 
       # buildOCIImage is a function, so it cannot live under `packages` (which
