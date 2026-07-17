@@ -1,0 +1,34 @@
+version: 2
+
+# nix-oci is a Nix-ecosystem tool, so it targets the same platforms the pinned
+# toolchain (nix/go-bin.nix) builds for. Windows is deliberately omitted: Nix
+# does not run there natively, so a /nix/store writer has no audience on it.
+project_name: nix-oci
+
+builds:
+  - main: ./cmd/nix-oci
+    binary: nix-oci
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      # Matches the writer's design: pure Go, statically linked, no cgo. See
+      # nix/go-bin.nix.
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"

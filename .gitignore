@@ -1,0 +1,15 @@
+.direnv/
+.envrc
+
+/result
+/result-*
+# The root build artifact only -- anchored so it does not also ignore the
+# cmd/nix-oci/ source directory.
+/nix-oci
+
+coverage.out
+
+# goreleaser build output
+/dist/
+
+claude-vm.sock

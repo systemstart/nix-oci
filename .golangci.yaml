@@ -1,0 +1,27 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - dupl
+    - unused
+    - gosec
+    - wrapcheck
+    - cyclop
+  settings:
+    gosec:
+      excludes:
+        - G122 # filesystem op in WalkDir callback — unavoidable for tree copy/overlay logic
+        - G204 # subprocess launched with variable — needed for kustomize/helm exec
+        - G301 # directory created with permissions > 0750 — acceptable for output dirs
+        - G304 # file path from variable — unavoidable for user-provided input/output paths
+        - G306 # file written with permissions > 0600 — output files need standard read perms
+        - G703 # path traversal via taint analysis — paths are validated at API boundary
+
+formatters:
+  enable:
+    - gofumpt

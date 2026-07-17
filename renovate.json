@@ -1,0 +1,23 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "schedule": [
+    "before 9am on monday"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "gomod"
+      ],
+      "commitMessagePrefix": "fix(deps):"
+    },
+    {
+      "matchManagers": [
+        "github-actions"
+      ],
+      "commitMessagePrefix": "ci(deps):"
+    }
+  ]
+}
