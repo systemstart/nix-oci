@@ -4,6 +4,20 @@ coverage:
       default:
         target: auto
 
+# Flags group coverage by package: `cmd` (the CLI) and `oci` (the writer). The
+# single coverage.out is uploaded tagged with both, and each flag's `paths`
+# scopes it. https://docs.codecov.com/docs/flags
+flag_management:
+  default_rules:
+    carryforward: true
+  individual_flags:
+    - name: cmd
+      paths:
+        - cmd/nix-oci/
+    - name: oci
+      paths:
+        - internal/oci/
+
 # Files with no testable logic that Go's statement coverage ignores but codecov
 # would otherwise count as 0%: type-alias re-exports and platform build stubs.
 ignore:

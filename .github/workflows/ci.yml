@@ -37,6 +37,7 @@ jobs:
       - uses: codecov/codecov-action@v7
         with:
           files: coverage.out
+          flags: cmd,oci
           token: ${{ secrets.CODECOV_TOKEN }}
 
   build:
