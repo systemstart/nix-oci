@@ -130,6 +130,13 @@ The OCI config is *almost* Docker's, minus `Healthcheck`, `Shell`, and `OnBuild`
 (`...manifest.v1+json`, `...config.v1+json`, `...layer.v1.tar+gzip`) — no Docker
 media types appear anywhere.
 
+The settable config fields are the OCI-standard ones: entrypoint, cmd, env,
+working-dir, user, exposed-ports, volumes, labels, and stop-signal. Provenance
+lives in **manifest annotations** (`org.opencontainers.image.*` — source,
+revision, version, …) rather than config labels, per OCI convention; when a base
+image is used, `org.opencontainers.image.base.digest` is emitted automatically.
+`created` stays pinned at epoch for reproducibility.
+
 ## Layering
 
 Layering is the highest-leverage decision for registry dedup. The default

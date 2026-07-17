@@ -9,12 +9,14 @@ import (
 )
 
 // baseImage is what a fromImage base contributes: its layer descriptors and
-// diffIDs (which our layers sit on top of) and its runtime config (which ours
-// inherits and overrides).
+// diffIDs (which our layers sit on top of), its runtime config (which ours
+// inherits and overrides), and its manifest digest (recorded as the
+// org.opencontainers.image.base.digest annotation).
 type baseImage struct {
-	layers  []Descriptor
-	diffIDs []digest.Digest
-	config  ImageConfig
+	layers         []Descriptor
+	diffIDs        []digest.Digest
+	config         ImageConfig
+	manifestDigest digest.Digest
 }
 
 // readBaseImage loads a base OCI image layout, resolving the manifest for the
@@ -46,9 +48,10 @@ func readBaseImage(dir, arch, osName string) (*baseImage, error) {
 	}
 
 	return &baseImage{
-		layers:  layers,
-		diffIDs: config.RootFS.DiffIDs,
-		config:  config.Config,
+		layers:         layers,
+		diffIDs:        config.RootFS.DiffIDs,
+		config:         config.Config,
+		manifestDigest: manifestDesc.Digest,
 	}, nil
 }
 
@@ -150,25 +153,103 @@ func copyBaseLayerBlobs(baseDir, blobDir string, layers []Descriptor) error {
 }
 
 // mergeConfig layers our overrides onto the base's runtime config: Env is
-// appended, Entrypoint/Cmd/WorkingDir replace when set, and everything else the
-// base declares (ExposedPorts, User, Labels, ...) is inherited unchanged.
+// appended and ExposedPorts/Volumes/Labels are unioned (ours winning per key),
+// while scalars and Entrypoint/Cmd replace when set. Fields we never set
+// (ArgsEscaped) pass through from the base.
 func mergeConfig(base, over ImageConfig) ImageConfig {
 	merged := base
+	merged.User = pick(over.User, base.User)
+	merged.StopSignal = pick(over.StopSignal, base.StopSignal)
+	merged.WorkingDir = pick(over.WorkingDir, base.WorkingDir)
+	merged.Entrypoint = pickList(over.Entrypoint, base.Entrypoint)
+	merged.Cmd = pickList(over.Cmd, base.Cmd)
+	merged.Env = append(append([]string{}, base.Env...), over.Env...)
+	merged.ExposedPorts = unionSet(base.ExposedPorts, over.ExposedPorts)
+	merged.Volumes = unionSet(base.Volumes, over.Volumes)
+	merged.Labels = mergeMap(base.Labels, over.Labels)
 
-	if len(over.Env) > 0 {
-		merged.Env = append(append([]string{}, base.Env...), over.Env...)
+	return merged
+}
+
+// stringSet turns a list into the map[string]struct{} the OCI config uses for
+// ExposedPorts and Volumes, or nil when empty.
+func stringSet(items []string) map[string]struct{} {
+	if len(items) == 0 {
+		return nil
 	}
 
-	if len(over.Entrypoint) > 0 {
-		merged.Entrypoint = over.Entrypoint
+	set := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		set[item] = struct{}{}
 	}
 
-	if len(over.Cmd) > 0 {
-		merged.Cmd = over.Cmd
+	return set
+}
+
+// imageAnnotations collects the manifest annotations: the caller's own, plus
+// org.opencontainers.image.base.digest when built on a base.
+func imageAnnotations(opts ImageOptions, base *baseImage) map[string]string {
+	annotations := make(map[string]string, len(opts.Annotations)+1)
+	for k, v := range opts.Annotations {
+		annotations[k] = v
 	}
 
-	if over.WorkingDir != "" {
-		merged.WorkingDir = over.WorkingDir
+	if base != nil && base.manifestDigest != "" {
+		annotations["org.opencontainers.image.base.digest"] = base.manifestDigest.String()
+	}
+
+	if len(annotations) == 0 {
+		return nil
+	}
+
+	return annotations
+}
+
+func pick(over, base string) string {
+	if over != "" {
+		return over
+	}
+
+	return base
+}
+
+func pickList(over, base []string) []string {
+	if len(over) > 0 {
+		return over
+	}
+
+	return base
+}
+
+func unionSet(base, over map[string]struct{}) map[string]struct{} {
+	if len(base) == 0 && len(over) == 0 {
+		return nil
+	}
+
+	merged := make(map[string]struct{}, len(base)+len(over))
+	for k := range base {
+		merged[k] = struct{}{}
+	}
+
+	for k := range over {
+		merged[k] = struct{}{}
+	}
+
+	return merged
+}
+
+func mergeMap(base, over map[string]string) map[string]string {
+	if len(base) == 0 && len(over) == 0 {
+		return nil
+	}
+
+	merged := make(map[string]string, len(base)+len(over))
+	for k, v := range base {
+		merged[k] = v
+	}
+
+	for k, v := range over {
+		merged[k] = v
 	}
 
 	return merged

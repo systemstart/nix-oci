@@ -62,11 +62,16 @@
           lib' = self.legacyPackages.${pkgs.stdenv.hostPlatform.system};
         in
         {
-          # A closure plus a customization layer (/etc, sticky /tmp).
+          # A closure plus a customization layer (/etc, sticky /tmp), runtime
+          # config (user, ports, labels), and provenance annotations.
           exampleImage = lib'.buildOCIImage {
             name = "hello-oci";
             contents = [ pkgs.hello ];
             entrypoint = [ "${pkgs.hello}/bin/hello" ];
+            user = "1000:1000";
+            exposedPorts = [ "8080/tcp" ];
+            labels."org.opencontainers.image.title" = "hello";
+            annotations."org.opencontainers.image.source" = "https://github.com/systemstart/nix-oci";
             extraCommands = ''
               mkdir -p etc tmp
               echo 'root:x:0:0:root:/root:/bin/sh' > etc/passwd

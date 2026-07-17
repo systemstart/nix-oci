@@ -21,6 +21,16 @@
   entrypoint ? [ ],
   cmd ? [ ],
   env ? [ ],
+  # Remaining runtime-config fields (OCI image config).
+  workingDir ? "",
+  user ? "",
+  exposedPorts ? [ ], # e.g. [ "8080/tcp" ]
+  volumes ? [ ], # e.g. [ "/data" ]
+  labels ? { }, # config labels, an attrset of KEY = "value"
+  stopSignal ? "",
+  # Manifest annotations (an attrset of KEY = "value"), e.g.
+  # { "org.opencontainers.image.source" = "https://…"; }.
+  annotations ? { },
   arch ? "amd64",
   os ? "linux",
   ref ? "latest",
@@ -52,6 +62,25 @@ let
   listFlag =
     flag: values:
     lib.optionalString (values != [ ]) "--${flag} ${lib.escapeShellArg (lib.concatStringsSep "," values)}";
+
+  scalarFlag = flag: value: lib.optionalString (value != "") "--${flag} ${lib.escapeShellArg value}";
+
+  # Render an attrset as repeated --flag KEY=VALUE.
+  mapFlag =
+    flag: attrs:
+    lib.concatStringsSep " " (
+      lib.mapAttrsToList (k: v: "--${flag} ${lib.escapeShellArg "${k}=${v}"}") attrs
+    );
+
+  configFlags = lib.concatStringsSep " " [
+    (scalarFlag "working-dir" workingDir)
+    (scalarFlag "user" user)
+    (listFlag "exposed-ports" exposedPorts)
+    (listFlag "volumes" volumes)
+    (scalarFlag "stop-signal" stopSignal)
+    (mapFlag "label" labels)
+    (mapFlag "annotation" annotations)
+  ];
 
   # With no store paths, feed an empty closure and skip the graph.
   storePathsInput = if hasContents then "${closure}/store-paths" else "/dev/null";
@@ -95,6 +124,7 @@ runCommand name
       ${listFlag "entrypoint" entrypoint} \
       ${listFlag "cmd" cmd} \
       ${listFlag "env" env} \
+      ${configFlags} \
       ${customFlag} \
       < ${storePathsInput} ${redirect}
   ''

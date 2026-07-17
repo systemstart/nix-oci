@@ -81,6 +81,24 @@ instances live under this repo's flake `checks` (build one with
 `nix build .#checks.x86_64-linux.exampleImage`). Pass `format = "archive"` to get
 a single streamed oci-archive tar instead of a directory.
 
+### On top of a base image (`fromImage`)
+
+Layer on an existing base — its layers sit beneath yours and its config
+(entrypoint, env, exposed ports) is inherited. `contents` may be empty when the
+base and a customization layer supply everything:
+
+```nix
+buildOCIImage {
+  name = "app-on-base";
+  fromImage = baseLayout;   # a base OCI image layout
+  # inherits the base's entrypoint/config; adds files at the image root:
+  extraCommands = "mkdir -p srv && cp -r ${site} srv/www";
+}
+```
+
+The output is a flat, standard OCI image (Docker layer media types in the base
+are normalized to OCI). See `.#checks.x86_64-linux.exampleFromImage`.
+
 ### Cached, explicitly-layered builds
 
 `buildOCIImageCached` gives each layer its own derivation, so an unchanged layer
@@ -141,6 +159,13 @@ nix path-info -r ./result \
 | `--entrypoint` | — | Comma-separated entrypoint |
 | `--cmd` | — | Comma-separated cmd |
 | `--env` | — | Comma-separated environment (`KEY=VALUE`) |
+| `--working-dir` | — | Working directory for the entrypoint |
+| `--user` | — | User (`UID[:GID]` or name) the container runs as |
+| `--exposed-ports` | — | Comma-separated ports to expose (e.g. `8080/tcp`) |
+| `--volumes` | — | Comma-separated volume mount points |
+| `--label` | — | Config label `KEY=VALUE` (repeatable) |
+| `--stop-signal` | — | Signal that stops the container (e.g. `SIGTERM`) |
+| `--annotation` | — | Manifest annotation `KEY=VALUE`, e.g. `org.opencontainers.image.source=…` (repeatable) |
 | `--arch` | `amd64` | Image architecture |
 | `--os` | `linux` | Image OS |
 | `--ref` | `latest` | `org.opencontainers.image.ref.name` on the manifest |
@@ -158,6 +183,45 @@ result stays all-OCI. With a base (or a customization layer), the closure may be
 empty.
 
 `nix-oci version` prints the version.
+
+## Coming from a Dockerfile
+
+The mental shift: nix-oci packages a **Nix closure**, not a sequence of build
+steps. `RUN`/`apt-get` become Nix packages in `contents`; the config
+instructions map one-to-one onto `buildOCIImage`.
+
+| Dockerfile | `buildOCIImage` |
+|---|---|
+| `FROM img` | `fromImage = img;` (an OCI layout) — or omit for from-scratch |
+| `RUN apt install foo` | add `pkgs.foo` to `contents` |
+| `COPY ./x /app/x` | `extraCommands = "mkdir -p app && cp -r ${./x} app/x";` |
+| `WORKDIR /app` | `workingDir = "/app";` |
+| `ENV K=V` | `env = [ "K=V" ];` |
+| `ENTRYPOINT ["/bin/app"]` | `entrypoint = [ "/bin/app" ];` |
+| `CMD ["--flag"]` | `cmd = [ "--flag" ];` |
+| `USER 1000` | `user = "1000";` |
+| `EXPOSE 8080` | `exposedPorts = [ "8080/tcp" ];` |
+| `VOLUME /data` | `volumes = [ "/data" ];` |
+| `LABEL k=v` | `labels.k = "v";` |
+| `STOPSIGNAL SIGTERM` | `stopSignal = "SIGTERM";` |
+| `HEALTHCHECK` / `SHELL` / `ONBUILD` | not supported — no OCI equivalent |
+
+## Coming from dockerTools
+
+`buildImage`/`buildLayeredImage` → `buildOCIImage`. Most options carry over by
+name; the headline difference is the output — a standard OCI layout you push with
+`skopeo`/`crane` and no daemon, rather than a docker-archive you `docker load`.
+
+| dockerTools | nix-oci |
+|---|---|
+| `buildLayeredImage` / `buildImage` | `buildOCIImage` |
+| `fromImage = pullImage {…}` | `fromImage = <OCI layout>;` — convert a docker-archive first: `skopeo copy docker-archive:… oci:…` |
+| `contents` / `copyToRoot` | `contents` (store paths become layers) |
+| `config.Cmd`/`.Entrypoint`/`.Env`/`.WorkingDir`/`.User`/`.ExposedPorts`/`.Labels` | `cmd`/`entrypoint`/`env`/`workingDir`/`user`/`exposedPorts`/`labels` |
+| `extraCommands` | `extraCommands` (files at the image root, root-owned) |
+| `fakeRootCommands` | `extraCommands` — content is root-owned automatically; arbitrary uid/gid isn't supported |
+| `maxLayers` | `maxLayers` |
+| **output**: docker-archive (`docker load`) | **output**: OCI layout (`skopeo copy` / `crane push`, no daemon) |
 
 ## Consuming the layout
 

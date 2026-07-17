@@ -49,6 +49,20 @@ type ImageOptions struct {
 	Env        []string
 	WorkingDir string
 
+	// The remaining runtime-config fields, all passed straight into the OCI
+	// image config. ExposedPorts/Volumes are lists like "8080/tcp" and "/data".
+	User         string
+	ExposedPorts []string
+	Volumes      []string
+	Labels       map[string]string
+	StopSignal   string
+
+	// Annotations are org.opencontainers.image.* (and any other) key/values set
+	// on the image manifest -- provenance like source, revision, version. When a
+	// base image is used, org.opencontainers.image.base.digest is added
+	// automatically.
+	Annotations map[string]string
+
 	Architecture string
 	OS           string
 
@@ -265,10 +279,15 @@ func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, ha
 	// (base layers included, with synthesized history so alignment holds
 	// regardless of what the base recorded).
 	imageConfig := ImageConfig{
-		Env:        opts.Env,
-		Entrypoint: opts.Entrypoint,
-		Cmd:        opts.Cmd,
-		WorkingDir: opts.WorkingDir,
+		User:         opts.User,
+		ExposedPorts: stringSet(opts.ExposedPorts),
+		Env:          opts.Env,
+		Entrypoint:   opts.Entrypoint,
+		Cmd:          opts.Cmd,
+		Volumes:      stringSet(opts.Volumes),
+		WorkingDir:   opts.WorkingDir,
+		Labels:       opts.Labels,
+		StopSignal:   opts.StopSignal,
 	}
 
 	var (
@@ -331,10 +350,11 @@ func writeManifestBlob(
 	}
 
 	manifest := Manifest{
-		Versioned: Versioned{SchemaVersion: 2},
-		MediaType: MediaTypeManifest,
-		Config:    config,
-		Layers:    descriptors,
+		Versioned:   Versioned{SchemaVersion: 2},
+		MediaType:   MediaTypeManifest,
+		Config:      config,
+		Layers:      descriptors,
+		Annotations: imageAnnotations(opts, base),
 	}
 
 	desc, err := writeJSONBlob(blobDir, MediaTypeManifest, manifest)

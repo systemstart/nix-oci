@@ -3,3 +3,10 @@ coverage:
     patch:
       default:
         target: auto
+
+# Files with no testable logic that Go's statement coverage ignores but codecov
+# would otherwise count as 0%: type-alias re-exports and platform build stubs.
+ignore:
+  - "internal/oci/spec.go"          # pure `type X = Y` aliases + constants
+  - "internal/oci/hardlink_other.go" # non-unix stub, not compiled on Linux
+  - "internal/oci/xattr_other.go"    # non-linux stub, not compiled on Linux

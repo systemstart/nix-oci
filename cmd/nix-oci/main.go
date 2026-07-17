@@ -100,6 +100,91 @@ func parseFlags(fs *flag.FlagSet, args []string) error {
 	return nil
 }
 
+// kvFlag is a repeatable KEY=VALUE flag collected into a map.
+type kvFlag map[string]string
+
+func (f kvFlag) String() string { return "" }
+
+func (f kvFlag) Set(s string) error {
+	key, value, ok := strings.Cut(s, "=")
+	if !ok {
+		return fmt.Errorf("expected KEY=VALUE, got %q", s)
+	}
+
+	f[key] = value
+
+	return nil
+}
+
+// imageFlags are the config-shaping flags shared by build and assemble.
+type imageFlags struct {
+	entrypoint   *string
+	cmd          *string
+	env          *string
+	workingDir   *string
+	arch         *string
+	osName       *string
+	ref          *string
+	user         *string
+	exposedPorts *string
+	volumes      *string
+	stopSignal   *string
+	customLayer  *string
+	labels       kvFlag
+	annotations  kvFlag
+}
+
+func registerImageFlags(fs *flag.FlagSet) *imageFlags {
+	f := &imageFlags{
+		entrypoint:   fs.String("entrypoint", "", "comma-separated entrypoint"),
+		cmd:          fs.String("cmd", "", "comma-separated cmd"),
+		env:          fs.String("env", "", "comma-separated environment (KEY=VALUE)"),
+		workingDir:   fs.String("working-dir", "", "working directory for the entrypoint"),
+		arch:         fs.String("arch", "amd64", "image architecture"),
+		osName:       fs.String("os", "linux", "image OS"),
+		ref:          fs.String("ref", "latest", "value for org.opencontainers.image.ref.name"),
+		user:         fs.String("user", "", "user (UID[:GID] or name) the container runs as"),
+		exposedPorts: fs.String("exposed-ports", "", "comma-separated ports to expose (e.g. 8080/tcp)"),
+		volumes:      fs.String("volumes", "", "comma-separated volume mount points"),
+		stopSignal:   fs.String("stop-signal", "", "signal that stops the container (e.g. SIGTERM)"),
+		customLayer:  fs.String("custom-layer", "", "directory whose contents become a final layer at the image root"),
+		labels:       kvFlag{},
+		annotations:  kvFlag{},
+	}
+
+	fs.Var(f.labels, "label", "config label KEY=VALUE (repeatable)")
+	fs.Var(f.annotations, "annotation", "manifest annotation KEY=VALUE, e.g. org.opencontainers.image.source (repeatable)")
+
+	return f
+}
+
+func (f *imageFlags) options() oci.ImageOptions {
+	return oci.ImageOptions{
+		Entrypoint:   splitList(*f.entrypoint),
+		Cmd:          splitList(*f.cmd),
+		Env:          splitList(*f.env),
+		WorkingDir:   *f.workingDir,
+		Architecture: *f.arch,
+		OS:           *f.osName,
+		RefName:      *f.ref,
+		User:         *f.user,
+		ExposedPorts: splitList(*f.exposedPorts),
+		Volumes:      splitList(*f.volumes),
+		StopSignal:   *f.stopSignal,
+		CustomLayer:  *f.customLayer,
+		Labels:       nilIfEmpty(f.labels),
+		Annotations:  nilIfEmpty(f.annotations),
+	}
+}
+
+func nilIfEmpty(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+
+	return m
+}
+
 // planCmd prints the layer partition (JSON) for a closure on stdin, without
 // compressing anything -- the cheap first step of the cached build path.
 func planCmd(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
@@ -177,14 +262,8 @@ func assembleCmd(args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("assemble", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
+	img := registerImageFlags(flags)
 	output := flags.String("output", "", "directory to write the OCI layout into (required)")
-	entrypoint := flags.String("entrypoint", "", "comma-separated entrypoint")
-	cmd := flags.String("cmd", "", "comma-separated cmd")
-	env := flags.String("env", "", "comma-separated environment (KEY=VALUE)")
-	arch := flags.String("arch", "amd64", "image architecture")
-	osName := flags.String("os", "linux", "image OS")
-	ref := flags.String("ref", "latest", "value for org.opencontainers.image.ref.name")
-	customLayer := flags.String("custom-layer", "", "directory whose contents become a final layer at the image root")
 
 	if err := parseFlags(flags, args); err != nil {
 		return err
@@ -194,17 +273,7 @@ func assembleCmd(args []string, stderr io.Writer) error {
 		return fmt.Errorf("--output is required")
 	}
 
-	opts := oci.ImageOptions{
-		CustomLayer:  *customLayer,
-		Entrypoint:   splitList(*entrypoint),
-		Cmd:          splitList(*cmd),
-		Env:          splitList(*env),
-		Architecture: *arch,
-		OS:           *osName,
-		RefName:      *ref,
-	}
-
-	if err := oci.Assemble(*output, flags.Args(), opts); err != nil {
+	if err := oci.Assemble(*output, flags.Args(), img.options()); err != nil {
 		return fmt.Errorf("assemble: %w", err)
 	}
 
@@ -265,16 +334,10 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("build", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 
+	img := registerImageFlags(flags)
 	output := flags.String("output", "", "directory to write the OCI layout into (required unless --archive)")
 	archive := flags.Bool("archive", false, "write an oci-archive (tar of the layout) to stdout instead of a directory")
-	entrypoint := flags.String("entrypoint", "", "comma-separated entrypoint")
-	cmd := flags.String("cmd", "", "comma-separated cmd")
-	env := flags.String("env", "", "comma-separated environment (KEY=VALUE)")
-	arch := flags.String("arch", "amd64", "image architecture")
-	osName := flags.String("os", "linux", "image OS")
-	ref := flags.String("ref", "latest", "value for org.opencontainers.image.ref.name")
 	maxLayers := flags.Int("max-layers", 100, "maximum layers; one store path per layer up to this cap, then the rest share the last")
-	customLayer := flags.String("custom-layer", "", "directory whose contents become a final layer at the image root (e.g. /etc, /tmp)")
 	closureGraph := flags.String("closure-graph", "", "path to closureInfo's registration file; enables popularity-ranked layering")
 	fromImage := flags.String("from-image", "", "path to a base OCI image layout; our layers and config sit on top of it")
 
@@ -291,23 +354,15 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if err := requireContent(roots, *fromImage, *customLayer); err != nil {
+	if err := requireContent(roots, *fromImage, *img.customLayer); err != nil {
 		return err
 	}
 
-	opts := oci.ImageOptions{
-		Roots:        roots,
-		MaxLayers:    *maxLayers,
-		CustomLayer:  *customLayer,
-		ClosureGraph: *closureGraph,
-		BaseImage:    *fromImage,
-		Entrypoint:   splitList(*entrypoint),
-		Cmd:          splitList(*cmd),
-		Env:          splitList(*env),
-		Architecture: *arch,
-		OS:           *osName,
-		RefName:      *ref,
-	}
+	opts := img.options()
+	opts.Roots = roots
+	opts.MaxLayers = *maxLayers
+	opts.ClosureGraph = *closureGraph
+	opts.BaseImage = *fromImage
 
 	if *archive {
 		if err := oci.WriteArchive(stdout, opts); err != nil {

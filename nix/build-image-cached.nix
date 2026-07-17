@@ -29,6 +29,13 @@
   entrypoint ? [ ],
   cmd ? [ ],
   env ? [ ],
+  workingDir ? "",
+  user ? "",
+  exposedPorts ? [ ],
+  volumes ? [ ],
+  labels ? { },
+  stopSignal ? "",
+  annotations ? { },
   arch ? "amd64",
   os ? "linux",
   ref ? "latest",
@@ -71,6 +78,24 @@ let
     flag: values:
     lib.optionalString (values != [ ]) "--${flag} ${lib.escapeShellArg (lib.concatStringsSep "," values)}";
 
+  scalarFlag = flag: value: lib.optionalString (value != "") "--${flag} ${lib.escapeShellArg value}";
+
+  mapFlag =
+    flag: attrs:
+    lib.concatStringsSep " " (
+      lib.mapAttrsToList (k: v: "--${flag} ${lib.escapeShellArg "${k}=${v}"}") attrs
+    );
+
+  configFlags = lib.concatStringsSep " " [
+    (scalarFlag "working-dir" workingDir)
+    (scalarFlag "user" user)
+    (listFlag "exposed-ports" exposedPorts)
+    (listFlag "volumes" volumes)
+    (scalarFlag "stop-signal" stopSignal)
+    (mapFlag "label" labels)
+    (mapFlag "annotation" annotations)
+  ];
+
   stageCustom = lib.optionalString (extraCommands != "") ''
     custom_root="$(mktemp -d)"
     ( cd "$custom_root" && ${extraCommands} )
@@ -87,6 +112,7 @@ runCommand name { nativeBuildInputs = [ nix-oci ]; } ''
     ${listFlag "entrypoint" entrypoint} \
     ${listFlag "cmd" cmd} \
     ${listFlag "env" env} \
+    ${configFlags} \
     ${customFlag} \
     ${lib.escapeShellArgs allLayers}
 ''

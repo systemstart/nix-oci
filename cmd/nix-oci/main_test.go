@@ -119,6 +119,45 @@ func manifestDescriptor(t *testing.T, layoutDir, wantRef string) oci.Descriptor 
 
 // TestBuildNoDockerMediaTypes guards the "no Docker media types anywhere" rule
 // by scanning every emitted file's raw bytes for the docker vendor prefix.
+// TestBuildConfigFlags covers the shared config flags: repeatable --label /
+// --annotation and the runtime-config passthrough land in the output.
+func TestBuildConfigFlags(t *testing.T) {
+	t.Parallel()
+
+	root := fakeStore(t)
+	out := filepath.Join(t.TempDir(), "img")
+
+	if _, stderr, err := runCLI(t, root, "build", "--output", out,
+		"--user", "1000",
+		"--exposed-ports", "8080/tcp",
+		"--label", "title=demo",
+		"--annotation", "org.opencontainers.image.source=https://ex",
+	); err != nil {
+		t.Fatalf("build: %v (%s)", err, stderr)
+	}
+
+	md := manifestDescriptor(t, out, "latest")
+	manifest := readBlob[oci.Manifest](t, out, string(md.Digest))
+
+	if manifest.Annotations["org.opencontainers.image.source"] != "https://ex" {
+		t.Errorf("source annotation = %v", manifest.Annotations)
+	}
+
+	config := readBlob[oci.Config](t, out, string(manifest.Config.Digest))
+
+	if config.Config.User != "1000" {
+		t.Errorf("user = %q", config.Config.User)
+	}
+
+	if config.Config.Labels["title"] != "demo" {
+		t.Errorf("labels = %v", config.Config.Labels)
+	}
+
+	if _, ok := config.Config.ExposedPorts["8080/tcp"]; !ok {
+		t.Errorf("exposed ports = %v", config.Config.ExposedPorts)
+	}
+}
+
 func TestBuildNoDockerMediaTypes(t *testing.T) {
 	t.Parallel()
 
@@ -266,6 +305,7 @@ func TestRunErrors(t *testing.T) {
 		{"build without output", []string{"build"}, "/nix/store/x", "--output is required"},
 		{"build empty closure", []string{"build", "--output", "unused"}, "\n  \n", "empty closure"},
 		{"build bad flag", []string{"build", "--nope"}, "", "parse flags"},
+		{"build bad label", []string{"build", "--output", "x", "--label", "noequals"}, "", "KEY=VALUE"},
 		{"combine no inputs", []string{"combine", "--output", "x"}, "", "at least one input"},
 		{"combine no output", []string{"combine", "some-layout"}, "", "--output is required"},
 	}
