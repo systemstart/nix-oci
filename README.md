@@ -3,6 +3,7 @@
 A native, deterministic [OCI image layout](https://github.com/opencontainers/image-spec/blob/main/image-layout.md) writer for Nix.
 
 [![CI](https://github.com/systemstart/nix-oci/actions/workflows/ci.yml/badge.svg)](https://github.com/systemstart/nix-oci/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/systemstart/nix-oci/branch/main/graph/badge.svg)](https://codecov.io/gh/systemstart/nix-oci)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](./LICENSE)
 
 Give it a Nix closure, get a spec-compliant OCI image any tool can consume —
@@ -145,7 +146,16 @@ nix path-info -r ./result \
 | `--ref` | `latest` | `org.opencontainers.image.ref.name` on the manifest |
 | `--max-layers` | `100` | One store path per layer up to this cap; overflow shares the last layer. `1` = single layer |
 | `--custom-layer` | — | Directory whose contents become a final layer at the image root (e.g. `/etc`, `/tmp`), root-owned |
+| `--from-image` | — | Path to a base OCI layout; our layers and config sit on top (see below) |
 | `--archive` | off | Stream an oci-archive (tar of the layout) to stdout instead of writing a directory |
+
+`--from-image` layers on an existing base (the `fromImage` param in the Nix
+functions): the base's layers sit beneath ours and its config is inherited, with
+`--entrypoint`/`--cmd`/`--env`/working-dir overriding. The output is a flat,
+standard OCI image — "base image" is a build-time convenience, not something the
+spec records. Docker layer media types in the base are normalized to OCI, so the
+result stays all-OCI. With a base (or a customization layer), the closure may be
+empty.
 
 `nix-oci version` prints the version.
 

@@ -39,6 +39,11 @@ type ImageOptions struct {
 	// closure overflows MaxLayers. Empty falls back to name-order assignment.
 	ClosureGraph string
 
+	// BaseImage, if set, is the path to a base OCI image layout. Its layers sit
+	// beneath ours and its config is inherited (and overridden by the fields
+	// above) -- the fromImage feature. With a base set, Roots may be empty.
+	BaseImage string
+
 	Entrypoint []string
 	Cmd        []string
 	Env        []string
@@ -78,6 +83,27 @@ func Write(dir string, opts ImageOptions) error {
 		return fmt.Errorf("create blob dir: %w", err)
 	}
 
+	// A fromImage base contributes its layers (copied in) beneath ours, and its
+	// config, which ours inherits and overrides.
+	if opts.BaseImage == "" {
+		return writeWithLayers(dir, blobDir, opts, nil)
+	}
+
+	base, err := readBaseImage(opts.BaseImage, opts.Architecture, opts.OS)
+	if err != nil {
+		return err
+	}
+
+	if err := copyBaseLayerBlobs(opts.BaseImage, blobDir, base.layers); err != nil {
+		return err
+	}
+
+	return writeWithLayers(dir, blobDir, opts, base)
+}
+
+// writeWithLayers compresses the store-path layers, adds the customization
+// layer, and writes config/manifest/index -- with the base (if any) beneath.
+func writeWithLayers(dir, blobDir string, opts ImageOptions, base *baseImage) error {
 	// Each group becomes one layer, in order. Because layer digests feed the
 	// config's diff_ids and the manifest's descriptors, every layer must be
 	// written before either JSON document can be finalized.
@@ -109,12 +135,12 @@ func Write(dir string, opts ImageOptions) error {
 		layers = append(layers, *custom)
 	}
 
-	configDesc, err := writeConfigBlob(blobDir, opts, layers, hasCustom)
+	configDesc, err := writeConfigBlob(blobDir, opts, layers, hasCustom, base)
 	if err != nil {
 		return err
 	}
 
-	manifestDesc, err := writeManifestBlob(blobDir, opts, configDesc, layers)
+	manifestDesc, err := writeManifestBlob(blobDir, opts, configDesc, layers, base)
 	if err != nil {
 		return err
 	}
@@ -232,13 +258,32 @@ func writeBlobFromLayer(blobDir string, produce func(io.Writer) (LayerResult, er
 	return result, nil
 }
 
-func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, hasCustom bool) (Descriptor, error) {
-	// diff_ids and history run parallel to the layers, in the same order. The
-	// spec requires the non-empty history entries to correspond one-to-one and
-	// in order with rootfs.diff_ids; we emit exactly one non-empty entry per
-	// layer, so the invariant holds for any layer count.
-	diffIDs := make([]digest.Digest, len(layers))
-	history := make([]History, len(layers))
+func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, hasCustom bool, base *baseImage) (Descriptor, error) {
+	// diff_ids and history run parallel to the layers, base first. The spec
+	// requires the non-empty history entries to correspond one-to-one and in
+	// order with rootfs.diff_ids; we emit exactly one non-empty entry per layer
+	// (base layers included, with synthesized history so alignment holds
+	// regardless of what the base recorded).
+	imageConfig := ImageConfig{
+		Env:        opts.Env,
+		Entrypoint: opts.Entrypoint,
+		Cmd:        opts.Cmd,
+		WorkingDir: opts.WorkingDir,
+	}
+
+	var (
+		diffIDs []digest.Digest
+		history []History
+	)
+
+	if base != nil {
+		diffIDs = append(diffIDs, base.diffIDs...)
+		for range base.diffIDs {
+			history = append(history, History{Created: &epochTime, CreatedBy: "nix-oci: base image"})
+		}
+
+		imageConfig = mergeConfig(base.config, imageConfig)
+	}
 
 	for i, layer := range layers {
 		createdBy := "nix-oci: nix store closure"
@@ -246,19 +291,14 @@ func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, ha
 			createdBy = "nix-oci: customization layer"
 		}
 
-		diffIDs[i] = digest.Digest(layer.DiffID)
-		history[i] = History{Created: &epochTime, CreatedBy: createdBy}
+		diffIDs = append(diffIDs, digest.Digest(layer.DiffID))
+		history = append(history, History{Created: &epochTime, CreatedBy: createdBy})
 	}
 
 	config := Config{
 		Created:  &epochTime,
 		Platform: Platform{Architecture: opts.Architecture, OS: opts.OS},
-		Config: ImageConfig{
-			Env:        opts.Env,
-			Entrypoint: opts.Entrypoint,
-			Cmd:        opts.Cmd,
-			WorkingDir: opts.WorkingDir,
-		},
+		Config:   imageConfig,
 		RootFS: RootFS{
 			Type:    "layers",
 			DiffIDs: diffIDs,
@@ -274,14 +314,20 @@ func writeManifestBlob(
 	opts ImageOptions,
 	config Descriptor,
 	layers []LayerResult,
+	base *baseImage,
 ) (Descriptor, error) {
-	descriptors := make([]Descriptor, len(layers))
-	for i, layer := range layers {
-		descriptors[i] = Descriptor{
+	var descriptors []Descriptor
+
+	if base != nil {
+		descriptors = append(descriptors, base.layers...)
+	}
+
+	for _, layer := range layers {
+		descriptors = append(descriptors, Descriptor{
 			MediaType: MediaTypeLayerGzip,
 			Digest:    digest.Digest(layer.Digest),
 			Size:      layer.Size,
-		}
+		})
 	}
 
 	manifest := Manifest{

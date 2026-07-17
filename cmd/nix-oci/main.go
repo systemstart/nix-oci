@@ -276,6 +276,7 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	maxLayers := flags.Int("max-layers", 100, "maximum layers; one store path per layer up to this cap, then the rest share the last")
 	customLayer := flags.String("custom-layer", "", "directory whose contents become a final layer at the image root (e.g. /etc, /tmp)")
 	closureGraph := flags.String("closure-graph", "", "path to closureInfo's registration file; enables popularity-ranked layering")
+	fromImage := flags.String("from-image", "", "path to a base OCI image layout; our layers and config sit on top of it")
 
 	if err := parseFlags(flags, args); err != nil {
 		return err
@@ -290,8 +291,8 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
-	if len(roots) == 0 {
-		return fmt.Errorf("empty closure on stdin (expected one store path per line)")
+	if err := requireContent(roots, *fromImage, *customLayer); err != nil {
+		return err
 	}
 
 	opts := oci.ImageOptions{
@@ -299,6 +300,7 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		MaxLayers:    *maxLayers,
 		CustomLayer:  *customLayer,
 		ClosureGraph: *closureGraph,
+		BaseImage:    *fromImage,
 		Entrypoint:   splitList(*entrypoint),
 		Cmd:          splitList(*cmd),
 		Env:          splitList(*env),
@@ -322,6 +324,17 @@ func build(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	}
 
 	_, _ = fmt.Fprintf(stderr, "wrote %s (%d store paths)\n", *output, len(roots))
+
+	return nil
+}
+
+// requireContent rejects a build with nothing to package: a base image or a
+// customization layer can each supply content, so an empty closure is only an
+// error when there is nothing else.
+func requireContent(roots []string, fromImage, customLayer string) error {
+	if len(roots) == 0 && fromImage == "" && customLayer == "" {
+		return fmt.Errorf("empty closure on stdin (expected one store path per line, or pass --from-image/--custom-layer)")
+	}
 
 	return nil
 }

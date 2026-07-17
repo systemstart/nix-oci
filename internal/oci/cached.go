@@ -90,12 +90,12 @@ func Assemble(outputDir string, layerDirs []string, opts ImageOptions) error {
 		layers = append(layers, *custom)
 	}
 
-	configDesc, err := writeConfigBlob(blobDir, opts, layers, hasCustom)
+	configDesc, err := writeConfigBlob(blobDir, opts, layers, hasCustom, nil)
 	if err != nil {
 		return err
 	}
 
-	manifestDesc, err := writeManifestBlob(blobDir, opts, configDesc, layers)
+	manifestDesc, err := writeManifestBlob(blobDir, opts, configDesc, layers, nil)
 	if err != nil {
 		return err
 	}

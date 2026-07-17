@@ -162,6 +162,18 @@ staging tree as its own derivation silently turns `chmod 1777 tmp` into `0555`.
 Staging inside the main build and packing it before any output is registered
 preserves the modes.
 
+## Base images (fromImage)
+
+"Base image" is not an OCI concept — the spec has no `FROM`, and a finished image
+is a flat config + layer list + manifest with no reference to any parent. So
+`fromImage` is a pure build-time convenience: read the base layout's config and
+layer descriptors, copy its layer blobs in, prepend them beneath ours, merge the
+config (base inherited, our entrypoint/cmd/env/working-dir overriding, base's
+`ExposedPorts`/`User`/labels kept), and emit a normal flat image. Docker layer
+media types in the base are rewritten to their OCI equivalents (same bytes), so
+the output stays all-OCI even from a Docker or hybrid base. With a base present,
+the closure may be empty (base + a customization layer alone is valid).
+
 ## Streaming (oci-archive)
 
 An OCI layout is a directory, not naturally a single streamable artifact — and a

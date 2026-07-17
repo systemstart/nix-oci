@@ -82,6 +82,18 @@
             entrypoint = [ "${pkgs.hello}/bin/hello" ];
           };
 
+          # fromImage: layer on top of an existing base image (here, the
+          # exampleImage layout), adding only a customization layer. The base's
+          # layers and config are inherited.
+          exampleFromImage = lib'.buildOCIImage {
+            name = "hello-on-base";
+            fromImage = self.checks.${pkgs.stdenv.hostPlatform.system}.exampleImage;
+            extraCommands = ''
+              mkdir -p etc
+              echo 'layered on a base image' > etc/note
+            '';
+          };
+
           # Explicitly layered and cached: glibc as a stable base, hello on top.
           exampleImageCached = lib'.buildOCIImageCached {
             name = "hello-oci-cached";

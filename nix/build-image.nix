@@ -15,8 +15,9 @@
 
 {
   name,
-  # Derivations or store paths to package (the image's roots).
-  contents,
+  # Derivations or store paths to package (the image's roots). May be empty when
+  # `fromImage` and/or `extraCommands` supply the content.
+  contents ? [ ],
   entrypoint ? [ ],
   cmd ? [ ],
   env ? [ ],
@@ -28,6 +29,10 @@
   # image root (e.g. `mkdir etc && echo ... > etc/passwd`). The content is
   # root-owned in the image.
   extraCommands ? "",
+  # A base OCI image layout to layer on top of (the fromImage feature). Our
+  # layers sit above the base's, and our config inherits the base's (overriding
+  # entrypoint/cmd/env/workingDir).
+  fromImage ? null,
   # "directory" (an OCI image layout) or "archive" (a single oci-archive tar,
   # streamed to the output).
   format ? "directory",
@@ -39,6 +44,7 @@ assert lib.elem format [
 ];
 
 let
+  hasContents = contents != [ ];
   closure = closureInfo { rootPaths = contents; };
 
   # Render a list-valued flag as the CLI's comma-separated form, or nothing when
@@ -46,6 +52,11 @@ let
   listFlag =
     flag: values:
     lib.optionalString (values != [ ]) "--${flag} ${lib.escapeShellArg (lib.concatStringsSep "," values)}";
+
+  # With no store paths, feed an empty closure and skip the graph.
+  storePathsInput = if hasContents then "${closure}/store-paths" else "/dev/null";
+  graphFlag = lib.optionalString hasContents "--closure-graph ${closure}/registration";
+  fromFlag = lib.optionalString (fromImage != null) "--from-image ${fromImage}";
 
   # extraCommands runs into a build-local staging dir, NOT a separate store path.
   # Materialising it as its own derivation would subject it to Nix store
@@ -65,10 +76,12 @@ let
   redirect = lib.optionalString (format == "archive") ''> "$out"'';
 in
 runCommand name
-  {
-    nativeBuildInputs = [ nix-oci ];
-    inherit closure;
-  }
+  (
+    {
+      nativeBuildInputs = [ nix-oci ];
+    }
+    // lib.optionalAttrs hasContents { inherit closure; }
+  )
   ''
     ${stageCustom}
     nix-oci build \
@@ -77,10 +90,11 @@ runCommand name
       --os ${lib.escapeShellArg os} \
       --ref ${lib.escapeShellArg ref} \
       --max-layers ${toString maxLayers} \
-      --closure-graph ${closure}/registration \
+      ${graphFlag} \
+      ${fromFlag} \
       ${listFlag "entrypoint" entrypoint} \
       ${listFlag "cmd" cmd} \
       ${listFlag "env" env} \
       ${customFlag} \
-      < ${closure}/store-paths ${redirect}
+      < ${storePathsInput} ${redirect}
   ''

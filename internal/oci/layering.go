@@ -21,6 +21,10 @@ import "sort"
 func assignLayers(roots []string, maxLayers int, popularity map[string]int) [][]string {
 	ordered := orderRoots(roots, popularity)
 
+	if len(ordered) == 0 {
+		return nil // no store paths (e.g. a fromImage base plus only a custom layer)
+	}
+
 	if maxLayers <= 1 || len(ordered) <= 1 {
 		return [][]string{ordered}
 	}
