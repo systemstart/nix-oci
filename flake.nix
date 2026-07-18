@@ -25,11 +25,11 @@
 
           nix-oci =
             let
-              # The one cosmetic version knob: names the Nix package and stamps
-              # the binary (via ldflags). Decoupled from the release tag -- it
-              # never affects gsemver or the goreleaser artifacts, so bump it
-              # lazily.
-              version = "0.2.0";
+              # Version is the single source of truth in ./VERSION, bumped and
+              # committed by `make release-tag` as part of tagging -- so the Nix
+              # build, the goreleaser artifact, and the git tag can never drift.
+              # It names the Nix package and stamps the binary (via ldflags).
+              version = pkgs.lib.fileContents ./VERSION;
             in
             buildGoModule {
               pname = "nix-oci";
