@@ -74,7 +74,7 @@ jobs:
           img=$(nix build .#checks.x86_64-linux.exampleImage --no-link --print-out-paths)
           jq -r '.manifests[0].digest' "$img/index.json" > digest.txt
           cat digest.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: repro-digest-${{ matrix.instance }}
           path: digest.txt
@@ -83,7 +83,7 @@ jobs:
     needs: reproducibility
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: digests
       - name: Assert the two machines produced the same digest
