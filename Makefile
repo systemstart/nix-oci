@@ -8,9 +8,15 @@ COVERAGE_THRESHOLD ?= 80
 NIX_SYSTEM         ?= $(shell nix eval --raw --impure --expr builtins.currentSystem)
 EXAMPLE_IMAGE      ?= .\#checks.$(NIX_SYSTEM).exampleImage
 
-.PHONY: all build test cover fmt lint repro release release-tag clean
+.PHONY: all build test cover fmt lint hooks repro release release-tag clean
 
 all: build
+
+# Points git at the version-controlled hooks in .githooks (pre-commit runs the
+# linter). Per-clone, so each contributor runs it once.
+hooks:
+	git config core.hooksPath .githooks
+	@echo "installed git hooks from .githooks"
 
 build:
 	$(GO) build ./...
