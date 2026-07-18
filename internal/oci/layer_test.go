@@ -78,7 +78,7 @@ func TestRootedLayerNamesAtRoot(t *testing.T) {
 	src := stagingTree(t)
 
 	var buf bytes.Buffer
-	if _, err := oci.WriteRootedLayer(&buf, src); err != nil {
+	if _, err := oci.WriteRootedLayer(&buf, src, nil); err != nil {
 		t.Fatalf("WriteRootedLayer: %v", err)
 	}
 
@@ -99,6 +99,57 @@ func TestRootedLayerNamesAtRoot(t *testing.T) {
 
 	if h := byName["tmp/"]; h != nil && h.Mode&0o1000 == 0 {
 		t.Errorf("tmp/ lost its sticky bit: mode %o", h.Mode)
+	}
+}
+
+// TestRootedLayerOwnership checks that ownership rules override the forced-root
+// default for matching entries (exact and recursive), while unmatched entries
+// stay root-owned.
+func TestRootedLayerOwnership(t *testing.T) {
+	t.Parallel()
+
+	src := t.TempDir()
+	for _, dir := range []string{"etc", "home/nonroot/cache"} {
+		if err := os.MkdirAll(filepath.Join(src, dir), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	if err := os.WriteFile(filepath.Join(src, "home/nonroot/cache", "f"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	own := []oci.OwnershipRule{{Path: "home/nonroot", UID: 65532, GID: 65532, Recursive: true}}
+
+	var buf bytes.Buffer
+	if _, err := oci.WriteRootedLayer(&buf, src, own); err != nil {
+		t.Fatalf("WriteRootedLayer: %v", err)
+	}
+
+	byName := make(map[string]*tar.Header)
+	for _, h := range decodeTar(t, &buf) {
+		byName[h.Name] = h
+	}
+
+	// The named dir and everything beneath it get the uid/gid. Siblings, the
+	// parent, and unrelated paths stay root -- the recursion boundary is a path
+	// segment, so "home/" (the parent) must not match "home/nonroot".
+	want := map[string][2]int{
+		"home/nonroot/":        {65532, 65532},
+		"home/nonroot/cache/":  {65532, 65532},
+		"home/nonroot/cache/f": {65532, 65532},
+		"etc/":                 {0, 0},
+		"home/":                {0, 0},
+	}
+	for name, w := range want {
+		h := byName[name]
+		if h == nil {
+			t.Fatalf("missing entry %q", name)
+		}
+
+		if h.Uid != w[0] || h.Gid != w[1] {
+			t.Errorf("%q: uid/gid = %d/%d, want %d/%d", name, h.Uid, h.Gid, w[0], w[1])
+		}
 	}
 }
 

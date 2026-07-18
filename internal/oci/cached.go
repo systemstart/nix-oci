@@ -80,7 +80,7 @@ func Assemble(outputDir string, layerDirs []string, opts ImageOptions) error {
 	}
 
 	// The customization layer is build-local (not cached) and goes on top.
-	custom, err := writeCustomLayer(blobDir, opts.CustomLayer)
+	custom, err := writeCustomLayer(blobDir, opts.CustomLayer, opts.Ownership)
 	if err != nil {
 		return err
 	}

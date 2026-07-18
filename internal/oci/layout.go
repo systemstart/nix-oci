@@ -30,8 +30,13 @@ type ImageOptions struct {
 
 	// CustomLayer, if set, is a directory whose contents become a final layer
 	// mapped to the image root (e.g. /etc, /tmp). It sorts after all store-path
-	// layers so it can shadow them. Content is root-owned. Empty disables it.
+	// layers so it can shadow them. Content is root-owned unless Ownership says
+	// otherwise. Empty disables it.
 	CustomLayer string
+
+	// Ownership reassigns uid/gid for matching paths in the customization layer
+	// (the fakeRootCommands/chown equivalent). Empty leaves everything root.
+	Ownership []OwnershipRule
 
 	// ClosureGraph, if set, is the path to closureInfo's registration file. It
 	// lets layer assignment rank paths by popularity (how many closure members
@@ -139,7 +144,7 @@ func writeWithLayers(dir, blobDir string, opts ImageOptions, base *baseImage) er
 
 	// The customization layer, if any, goes on top so it shadows the store
 	// layers.
-	custom, err := writeCustomLayer(blobDir, opts.CustomLayer)
+	custom, err := writeCustomLayer(blobDir, opts.CustomLayer, opts.Ownership)
 	if err != nil {
 		return err
 	}
@@ -215,8 +220,9 @@ func writeLayerBlob(blobDir string, roots []string) (LayerResult, error) {
 }
 
 // writeCustomLayer writes the customization layer (srcDir's contents) as a blob,
-// or returns nil if srcDir is unset or empty (no point in an empty layer).
-func writeCustomLayer(blobDir, srcDir string) (*LayerResult, error) {
+// or returns nil if srcDir is unset or empty (no point in an empty layer). own
+// (may be nil) reassigns ownership of matching entries.
+func writeCustomLayer(blobDir, srcDir string, own []OwnershipRule) (*LayerResult, error) {
 	if srcDir == "" {
 		return nil, nil
 	}
@@ -231,7 +237,7 @@ func writeCustomLayer(blobDir, srcDir string) (*LayerResult, error) {
 	}
 
 	result, err := writeBlobFromLayer(blobDir, func(w io.Writer) (LayerResult, error) {
-		return WriteRootedLayer(w, srcDir)
+		return WriteRootedLayer(w, srcDir, own)
 	})
 	if err != nil {
 		return nil, err

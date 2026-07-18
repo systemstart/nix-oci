@@ -78,20 +78,32 @@
         in
         {
           # A closure plus a customization layer (/etc, sticky /tmp), runtime
-          # config (user, ports, labels), and provenance annotations.
+          # config (user, ports, labels), provenance annotations, and the
+          # migration conveniences: /bin/hello via binLinks, a /bin/greet alias
+          # via rootLinks, and a non-root-owned home via chown.
           exampleImage = lib'.buildOCIImage {
             name = "hello-oci";
             contents = [ pkgs.hello ];
-            entrypoint = [ "${pkgs.hello}/bin/hello" ];
+            entrypoint = [ "/bin/hello" ];
             user = "1000:1000";
             exposedPorts = [ "8080/tcp" ];
             labels."org.opencontainers.image.title" = "hello";
             annotations."org.opencontainers.image.source" = "https://github.com/systemstart/nix-oci";
+            binLinks = [ pkgs.hello ];
+            rootLinks."bin/greet" = "${pkgs.hello}/bin/hello";
             extraCommands = ''
-              mkdir -p etc tmp
+              mkdir -p etc tmp home/nonroot
               echo 'root:x:0:0:root:/root:/bin/sh' > etc/passwd
               chmod 1777 tmp
             '';
+            chown = [
+              {
+                path = "home/nonroot";
+                uid = 1000;
+                gid = 1000;
+                recursive = true;
+              }
+            ];
           };
 
           # The same image as a single streamed oci-archive tar.

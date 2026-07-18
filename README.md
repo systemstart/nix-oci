@@ -170,7 +170,8 @@ nix path-info -r ./result \
 | `--os` | `linux` | Image OS |
 | `--ref` | `latest` | `org.opencontainers.image.ref.name` on the manifest |
 | `--max-layers` | `100` | One store path per layer up to this cap; overflow shares the last layer. `1` = single layer |
-| `--custom-layer` | — | Directory whose contents become a final layer at the image root (e.g. `/etc`, `/tmp`), root-owned |
+| `--custom-layer` | — | Directory whose contents become a final layer at the image root (e.g. `/etc`, `/tmp`); root-owned unless `--own` says otherwise |
+| `--own` | — | Set ownership of a custom-layer path: `PATH:UID:GID` (append `:r` for recursive), repeatable |
 | `--from-image` | — | Path to a base OCI layout; our layers and config sit on top (see below) |
 | `--archive` | off | Stream an oci-archive (tar of the layout) to stdout instead of writing a directory |
 
@@ -181,6 +182,20 @@ standard OCI image — "base image" is a build-time convenience, not something t
 spec records. Docker layer media types in the base are normalized to OCI, so the
 result stays all-OCI. With a base (or a customization layer), the closure may be
 empty.
+
+The Nix functions add three conveniences on top of these flags, for images that
+expect conventional root paths or a writable per-user directory:
+
+- **`rootLinks`** — `{ "bin/app" = "${app}/bin/app"; }` creates root-level
+  symlinks. nix-oci keeps `contents` at their `/nix/store/…` paths, so this is
+  how you make `/bin/app` (or `/etc/…`) resolve. The target must be in the
+  closure.
+- **`binLinks`** — `[ pkg ]` symlinks every file in each package's `bin/` into
+  `/bin` (the dockerTools "merge into `/`" behaviour), and adds the package to
+  the closure.
+- **`chown`** — `[ { path = "home/app"; uid = 1000; gid = 1000; recursive =
+  true; } ]` gives customization-layer paths a non-root owner (the CLI `--own`).
+  Store content is always root-owned.
 
 `nix-oci version` prints the version.
 
@@ -195,9 +210,10 @@ instructions map one-to-one onto `buildOCIImage`.
 | `FROM img` | `fromImage = img;` (an OCI layout) — or omit for from-scratch |
 | `RUN apt install foo` | add `pkgs.foo` to `contents` |
 | `COPY ./x /app/x` | `extraCommands = "mkdir -p app && cp -r ${./x} app/x";` |
+| `COPY --chown=1000 …` | `extraCommands` to stage + `chown = [ { path = …; uid = 1000; gid = 1000; } ];` |
 | `WORKDIR /app` | `workingDir = "/app";` |
 | `ENV K=V` | `env = [ "K=V" ];` |
-| `ENTRYPOINT ["/bin/app"]` | `entrypoint = [ "/bin/app" ];` |
+| `ENTRYPOINT ["/bin/app"]` | `entrypoint = [ "/bin/app" ]; binLinks = [ app ];` (so `/bin/app` exists) — or point at the store path directly |
 | `CMD ["--flag"]` | `cmd = [ "--flag" ];` |
 | `USER 1000` | `user = "1000";` |
 | `EXPOSE 8080` | `exposedPorts = [ "8080/tcp" ];` |
@@ -216,10 +232,10 @@ name; the headline difference is the output — a standard OCI layout you push w
 |---|---|
 | `buildLayeredImage` / `buildImage` | `buildOCIImage` |
 | `fromImage = pullImage {…}` | `fromImage = <OCI layout>;` — convert a docker-archive first: `skopeo copy docker-archive:… oci:…` |
-| `contents` / `copyToRoot` | `contents` (store paths become layers) |
+| `contents` / `copyToRoot` (merged into `/`) | `contents` — store paths stay at `/nix/store/…`; use `binLinks`/`rootLinks` to expose `/bin/…` |
 | `config.Cmd`/`.Entrypoint`/`.Env`/`.WorkingDir`/`.User`/`.ExposedPorts`/`.Labels` | `cmd`/`entrypoint`/`env`/`workingDir`/`user`/`exposedPorts`/`labels` |
-| `extraCommands` | `extraCommands` (files at the image root, root-owned) |
-| `fakeRootCommands` | `extraCommands` — content is root-owned automatically; arbitrary uid/gid isn't supported |
+| `extraCommands` | `extraCommands` (files at the image root, root-owned by default) |
+| `fakeRootCommands` (e.g. `chown -R 1000 /home/app`) | `chown = [ { path = "home/app"; uid = 1000; gid = 1000; recursive = true; } ];` — declared, not run under fakeroot |
 | `maxLayers` | `maxLayers` |
 | **output**: docker-archive (`docker load`) | **output**: OCI layout (`skopeo copy` / `crane push`, no daemon) |
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/systemstart/nix-oci/internal/oci"
@@ -119,6 +120,48 @@ func (f kvFlag) Set(s string) error {
 	return nil
 }
 
+// ownFlag is a repeatable ownership flag, PATH:UID:GID[:r], collected in order.
+// It sets uid/gid on customization-layer paths (the fakeRootCommands/chown
+// stand-in). A trailing ":r" makes the rule cover everything under PATH.
+type ownFlag []oci.OwnershipRule
+
+func (f *ownFlag) String() string { return "" }
+
+func (f *ownFlag) Set(s string) error {
+	// Split from the right so a PATH containing ':' still parses: an optional
+	// "r"/"R" recursion marker, then GID, then UID, then PATH is the remainder.
+	parts := strings.Split(s, ":")
+
+	recursive := false
+	if last := parts[len(parts)-1]; last == "r" || last == "R" {
+		recursive = true
+		parts = parts[:len(parts)-1]
+	}
+
+	if len(parts) < 3 {
+		return fmt.Errorf("expected PATH:UID:GID[:r], got %q", s)
+	}
+
+	uid, err := strconv.Atoi(parts[len(parts)-2])
+	if err != nil {
+		return fmt.Errorf("bad uid in %q: %w", s, err)
+	}
+
+	gid, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return fmt.Errorf("bad gid in %q: %w", s, err)
+	}
+
+	path := strings.Join(parts[:len(parts)-2], ":")
+	if path == "" {
+		return fmt.Errorf("empty path in %q", s)
+	}
+
+	*f = append(*f, oci.OwnershipRule{Path: path, UID: uid, GID: gid, Recursive: recursive})
+
+	return nil
+}
+
 // imageFlags are the config-shaping flags shared by build and assemble.
 type imageFlags struct {
 	entrypoint   *string
@@ -135,6 +178,7 @@ type imageFlags struct {
 	customLayer  *string
 	labels       kvFlag
 	annotations  kvFlag
+	own          ownFlag
 }
 
 func registerImageFlags(fs *flag.FlagSet) *imageFlags {
@@ -157,6 +201,7 @@ func registerImageFlags(fs *flag.FlagSet) *imageFlags {
 
 	fs.Var(f.labels, "label", "config label KEY=VALUE (repeatable)")
 	fs.Var(f.annotations, "annotation", "manifest annotation KEY=VALUE, e.g. org.opencontainers.image.source (repeatable)")
+	fs.Var(&f.own, "own", "set ownership of a custom-layer path: PATH:UID:GID[:r] for recursive (repeatable)")
 
 	return f
 }
@@ -175,6 +220,7 @@ func (f *imageFlags) options() oci.ImageOptions {
 		Volumes:      splitList(*f.volumes),
 		StopSignal:   *f.stopSignal,
 		CustomLayer:  *f.customLayer,
+		Ownership:    f.own,
 		Labels:       nilIfEmpty(f.labels),
 		Annotations:  nilIfEmpty(f.annotations),
 	}

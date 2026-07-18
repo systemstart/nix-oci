@@ -40,6 +40,11 @@
   os ? "linux",
   ref ? "latest",
   extraCommands ? "",
+  # See build-image.nix for these three. They shape the (build-local, uncached)
+  # customization layer identically here.
+  chown ? [ ],
+  rootLinks ? { },
+  binLinks ? [ ],
 }:
 
 let
@@ -70,7 +75,8 @@ let
   ) [ ] layers;
 
   # The top layer holds the rest of the image content, above the lower layers.
-  topLayer = mkLayer "top" contents lowerLayers;
+  # binLinks packages must be in the image, so they join the top layer's roots.
+  topLayer = mkLayer "top" (contents ++ binLinks) lowerLayers;
 
   allLayers = lowerLayers ++ [ topLayer ];
 
@@ -96,11 +102,41 @@ let
     (mapFlag "annotation" annotations)
   ];
 
-  stageCustom = lib.optionalString (extraCommands != "") ''
+  rootLinkCmds = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (
+      name: target:
+      "mkdir -p \"$(dirname ${lib.escapeShellArg name})\" && ln -s ${lib.escapeShellArg target} ${lib.escapeShellArg name}"
+    ) rootLinks
+  );
+
+  binLinkCmds = lib.concatMapStringsSep "\n" (pkg: ''
+    mkdir -p bin
+    for f in ${pkg}/bin/*; do ln -s "$f" "bin/$(basename "$f")"; done
+  '') binLinks;
+
+  stageScript = lib.concatStringsSep "\n" (
+    lib.filter (s: s != "") [
+      extraCommands
+      rootLinkCmds
+      binLinkCmds
+    ]
+  );
+  hasCustom = stageScript != "";
+
+  ownFlags = lib.concatStringsSep " " (
+    map (
+      o:
+      "--own ${
+        lib.escapeShellArg "${o.path}:${toString o.uid}:${toString o.gid}${lib.optionalString (o.recursive or false) ":r"}"
+      }"
+    ) chown
+  );
+
+  stageCustom = lib.optionalString hasCustom ''
     custom_root="$(mktemp -d)"
-    ( cd "$custom_root" && ${extraCommands} )
+    ( cd "$custom_root" && ${stageScript} )
   '';
-  customFlag = lib.optionalString (extraCommands != "") ''--custom-layer "$custom_root"'';
+  customFlag = lib.optionalString hasCustom ''--custom-layer "$custom_root" ${ownFlags}'';
 in
 runCommand name { nativeBuildInputs = [ nix-oci ]; } ''
   ${stageCustom}

@@ -37,8 +37,24 @@
   maxLayers ? 100,
   # Shell run in a staging directory whose contents become a final layer at the
   # image root (e.g. `mkdir etc && echo ... > etc/passwd`). The content is
-  # root-owned in the image.
+  # root-owned unless `chown` says otherwise.
   extraCommands ? "",
+  # Ownership rules for customization-layer paths -- the fakeRootCommands/chown
+  # equivalent. Each is { path; uid; gid; recursive ? false; }, path being
+  # root-relative (e.g. "home/nonroot"). The path must exist in the custom layer
+  # (created by extraCommands/rootLinks/binLinks); store-path content is always
+  # root-owned.
+  chown ? [ ],
+  # Root-level symlinks, { "<root-relative path>" = "<target>"; }, e.g.
+  # { "bin/app" = "${app}/bin/app"; }. Smooths migrations
+  # from dockerTools images that hardcode /bin/<name>: nix-oci keeps `contents`
+  # at their store paths, so conventional paths otherwise do not exist. The
+  # target must be within the closure (a `contents` entry).
+  rootLinks ? { },
+  # Packages whose entire bin/ is symlinked into the image's /bin (like
+  # dockerTools merging a package into /). Each package is also added to the
+  # closure, so `binLinks = [ pkg ]` both packages and exposes it.
+  binLinks ? [ ],
   # A base OCI image layout to layer on top of (the fromImage feature). Our
   # layers sit above the base's, and our config inherits the base's (overriding
   # entrypoint/cmd/env/workingDir).
@@ -54,8 +70,10 @@ assert lib.elem format [
 ];
 
 let
-  hasContents = contents != [ ];
-  closure = closureInfo { rootPaths = contents; };
+  # binLinks packages must be in the image, so they join the closure roots.
+  roots = contents ++ binLinks;
+  hasContents = roots != [ ];
+  closure = closureInfo { rootPaths = roots; };
 
   # Render a list-valued flag as the CLI's comma-separated form, or nothing when
   # the list is empty (an empty continuation line is harmless in the script).
@@ -87,17 +105,54 @@ let
   graphFlag = lib.optionalString hasContents "--closure-graph ${closure}/registration";
   fromFlag = lib.optionalString (fromImage != null) "--from-image ${fromImage}";
 
-  # extraCommands runs into a build-local staging dir, NOT a separate store path.
-  # Materialising it as its own derivation would subject it to Nix store
+  # rootLinks/binLinks become `ln -s` commands run in the same staging dir as
+  # extraCommands, so all three contribute to one customization layer.
+  rootLinkCmds = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (
+      name: target:
+      "mkdir -p \"$(dirname ${lib.escapeShellArg name})\" && ln -s ${lib.escapeShellArg target} ${lib.escapeShellArg name}"
+    ) rootLinks
+  );
+
+  # `${pkg}/bin/*` is deliberately unquoted so the shell globs it; store paths
+  # never contain spaces. Each entry lands at /bin/<name>.
+  binLinkCmds = lib.concatMapStringsSep "\n" (pkg: ''
+    mkdir -p bin
+    for f in ${pkg}/bin/*; do ln -s "$f" "bin/$(basename "$f")"; done
+  '') binLinks;
+
+  # The staging script is the union of the three content sources; the layer
+  # exists only if at least one produced something.
+  stageScript = lib.concatStringsSep "\n" (
+    lib.filter (s: s != "") [
+      extraCommands
+      rootLinkCmds
+      binLinkCmds
+    ]
+  );
+  hasCustom = stageScript != "";
+
+  # Render chown rules as repeated --own PATH:UID:GID[:r].
+  ownFlags = lib.concatStringsSep " " (
+    map (
+      o:
+      "--own ${
+        lib.escapeShellArg "${o.path}:${toString o.uid}:${toString o.gid}${lib.optionalString (o.recursive or false) ":r"}"
+      }"
+    ) chown
+  );
+
+  # The staging script runs into a build-local staging dir, NOT a separate store
+  # path. Materialising it as its own derivation would subject it to Nix store
   # canonicalisation, which strips write/sticky/setuid bits (so `chmod 1777 tmp`
   # would silently become 0555). Staging inside this build and packing it before
   # any output is registered preserves the modes verbatim.
-  stageCustom = lib.optionalString (extraCommands != "") ''
+  stageCustom = lib.optionalString hasCustom ''
     custom_root="$(mktemp -d)"
-    ( cd "$custom_root" && ${extraCommands} )
+    ( cd "$custom_root" && ${stageScript} )
   '';
 
-  customFlag = lib.optionalString (extraCommands != "") ''--custom-layer "$custom_root"'';
+  customFlag = lib.optionalString hasCustom ''--custom-layer "$custom_root" ${ownFlags}'';
 
   # A directory layout writes into $out; an archive streams to stdout, which we
   # redirect to $out.

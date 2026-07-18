@@ -63,13 +63,53 @@ func WriteLayer(w io.Writer, roots []string) (LayerResult, error) {
 	return writeLayerStream(w, func(tw *tar.Writer) error { return writeEntries(tw, roots) })
 }
 
+// OwnershipRule assigns a uid/gid to a customization-layer entry. Path is
+// root-relative (e.g. "home/nonroot"); Recursive extends the rule to everything
+// beneath it. Rules only apply to the customization layer -- store-path layers
+// are always root-owned -- and are the deterministic stand-in for dockerTools'
+// fakeRootCommands/chown (no fakeroot, ownership is stated, not observed).
+type OwnershipRule struct {
+	Path      string
+	UID, GID  int
+	Recursive bool
+}
+
 // WriteRootedLayer writes a deterministic tar+gzip layer from the *contents* of
 // srcDir, mapped to the image root (srcDir/etc/passwd -> etc/passwd). This is
 // how the customization layer carries non-store content: /etc scaffolding,
-// /tmp, injected files. Entries are forced to uid/gid 0 like every other layer,
-// so the content is root-owned.
-func WriteRootedLayer(w io.Writer, srcDir string) (LayerResult, error) {
-	return writeLayerStream(w, func(tw *tar.Writer) error { return writeRootedEntries(tw, srcDir) })
+// /tmp, injected files. Entries default to uid/gid 0 like every other layer;
+// any matching rule in own overrides that, so selected paths can be non-root.
+func WriteRootedLayer(w io.Writer, srcDir string, own []OwnershipRule) (LayerResult, error) {
+	return writeLayerStream(w, func(tw *tar.Writer) error { return writeRootedEntries(tw, srcDir, own) })
+}
+
+// cleanOwnName normalizes a rule path or tar name to a bare root-relative form
+// (no leading "./" or "/", no trailing "/") so the two compare directly.
+func cleanOwnName(s string) string {
+	return strings.Trim(strings.TrimPrefix(s, "./"), "/")
+}
+
+// applyOwnership reassigns a header's uid/gid if any ownership rule matches,
+// leaving the forced-root default in place otherwise.
+func applyOwnership(header *tar.Header, own []OwnershipRule) {
+	if uid, gid, ok := ownerFor(own, header.Name); ok {
+		header.Uid, header.Gid = uid, gid
+	}
+}
+
+// ownerFor returns the uid/gid a rule assigns to the tar entry named name, and
+// whether any rule matched. Later rules win, so a recursive parent can be listed
+// first and a specific child override it.
+func ownerFor(rules []OwnershipRule, name string) (uid, gid int, ok bool) {
+	n := cleanOwnName(name)
+	for _, r := range rules {
+		p := cleanOwnName(r.Path)
+		if n == p || (r.Recursive && strings.HasPrefix(n, p+"/")) {
+			uid, gid, ok = r.UID, r.GID, true
+		}
+	}
+
+	return uid, gid, ok
 }
 
 // writeLayerStream sets up the tar+gzip pipeline, hashes it twice in a single
@@ -127,13 +167,13 @@ func writeEntries(tarWriter *tar.Writer, roots []string) error {
 
 	nameFn := func(p string, isDir bool) string { return tarName(p, isDir) }
 
-	return writeEntryList(tarWriter, paths, nameFn, ancestors)
+	return writeEntryList(tarWriter, paths, nameFn, ancestors, nil)
 }
 
 // writeRootedEntries emits srcDir's contents, sorted, named relative to srcDir
 // so they land at the image root. No ancestor-mode forcing: the caller controls
-// modes (e.g. /tmp at 1777).
-func writeRootedEntries(tarWriter *tar.Writer, srcDir string) error {
+// modes (e.g. /tmp at 1777). own (may be nil) reassigns ownership per entry.
+func writeRootedEntries(tarWriter *tar.Writer, srcDir string, own []OwnershipRule) error {
 	paths, err := collectRootedPaths(srcDir)
 	if err != nil {
 		return err
@@ -141,17 +181,17 @@ func writeRootedEntries(tarWriter *tar.Writer, srcDir string) error {
 
 	nameFn := func(p string, isDir bool) string { return rootedName(srcDir, p, isDir) }
 
-	return writeEntryList(tarWriter, paths, nameFn, nil)
+	return writeEntryList(tarWriter, paths, nameFn, nil, own)
 }
 
-// writeEntryList writes each path in order. ancestors may be nil.
-func writeEntryList(tarWriter *tar.Writer, paths []string, nameFn func(string, bool) string, ancestors map[string]bool) error {
+// writeEntryList writes each path in order. ancestors and own may be nil.
+func writeEntryList(tarWriter *tar.Writer, paths []string, nameFn func(string, bool) string, ancestors map[string]bool, own []OwnershipRule) error {
 	// Records the first tar name emitted for each inode, so later paths sharing
 	// it become hardlink entries rather than duplicate bodies.
 	links := make(map[fileKey]string)
 
 	for _, p := range paths {
-		if err := writeEntry(tarWriter, p, nameFn, ancestors, links); err != nil {
+		if err := writeEntry(tarWriter, p, nameFn, ancestors, links, own); err != nil {
 			return fmt.Errorf("tar entry %s: %w", p, err)
 		}
 	}
@@ -168,8 +208,9 @@ type fileKey struct {
 
 // writeEntry writes a single path: header, then content for regular files.
 // nameFn maps the on-disk path to its tar name; ancestors (may be nil) is the
-// set of paths whose directory mode is forced.
-func writeEntry(tarWriter *tar.Writer, p string, nameFn func(string, bool) string, ancestors map[string]bool, links map[fileKey]string) error {
+// set of paths whose directory mode is forced; own (may be nil) reassigns the
+// entry's uid/gid.
+func writeEntry(tarWriter *tar.Writer, p string, nameFn func(string, bool) string, ancestors map[string]bool, links map[fileKey]string, own []OwnershipRule) error {
 	info, err := os.Lstat(p)
 	if err != nil {
 		return fmt.Errorf("lstat: %w", err)
@@ -188,6 +229,10 @@ func writeEntry(tarWriter *tar.Writer, p string, nameFn func(string, bool) strin
 	}
 
 	normalizeHeader(header, nameFn(p, info.IsDir()), info, ancestors[p])
+
+	// Ownership overrides the forced-root default from normalizeHeader. It runs
+	// before linkIfSeen so a hardlink entry carries the same uid/gid.
+	applyOwnership(header, own)
 
 	if err := addXattrs(header, p, info); err != nil {
 		return err

@@ -86,9 +86,11 @@ Because every artifact is digest-addressed, *any* nondeterminism invalidates the
 whole chain and defeats registry dedup. The writer pins every lever:
 
 - **Tar:** epoch mtimes; `atime`/`ctime` cleared; uid/gid forced to 0 with empty
-  uname/gname; PAX format pinned (store paths exceed USTAR's 100-byte limit, and
-  Go writes PAX records in sorted key order); entries sorted globally by name, so
-  a layer is a pure function of the *set* of roots, not their enumeration order.
+  uname/gname (customization-layer entries may then be reassigned by explicit
+  `chown` rules — still deterministic, since the rules are stated data); PAX
+  format pinned (store paths exceed USTAR's 100-byte limit, and Go writes PAX
+  records in sorted key order); entries sorted globally by name, so a layer is a
+  pure function of the *set* of roots, not their enumeration order.
 - **Parent directory modes are forced, not inherited.** The real `/nix/store` is
   commonly mode 1775 and varies between machines; inheriting it would make the
   layer digest host-dependent, so `/nix` and `/nix/store` are emitted at 0755
@@ -159,15 +161,30 @@ property-tested for any layer count.
 
 The **customization layer** carries non-store content (`/etc` scaffolding,
 `/tmp`, injected files): `WriteRootedLayer` maps a directory's contents to the
-image root, forces them root-owned, and emits them as the topmost layer so they
-shadow the store layers. `buildOCIImage` exposes it as `extraCommands`.
+image root, defaults them to root-owned, and emits them as the topmost layer so
+they shadow the store layers. `buildOCIImage` exposes it as `extraCommands`.
 
-There is a real reproducibility trap here: `extraCommands` must stage into a
-**build-local** directory, not a separate derivation. Nix store canonicalisation
-strips write/sticky/setuid bits when a tree becomes a store path, so building the
-staging tree as its own derivation silently turns `chmod 1777 tmp` into `0555`.
-Staging inside the main build and packing it before any output is registered
-preserves the modes.
+**Ownership** is the fakeroot question, answered differently. dockerTools runs
+`fakeRootCommands` under a `fakeroot` so a real `chown` is observed. nix-oci
+takes ownership as *stated* data instead: `chown = [ { path; uid; gid; recursive;
+} ]` (CLI `--own PATH:UID:GID[:r]`) reassigns matching entries in the
+customization layer after the forced-root default, so no fakeroot dependency is
+introduced and the result is a pure function of the rules. Store-path layers are
+always root-owned — their ownership is the closure's, not ours to rewrite.
+
+**Root symlinks.** Because `contents` stay at `/nix/store/…` and are never merged
+into `/`, conventional paths like `/bin/app` don't exist unless asked for.
+`rootLinks` (explicit `name → target`) and `binLinks` (a package's whole `bin/`,
+also added to the closure) generate `ln -s` into the same staging dir. They're
+pure Nix sugar over the customization layer — no new image concept — that smooths
+dockerTools migrations where an entrypoint hardcodes `/bin/<name>`.
+
+There is a real reproducibility trap here: the staging (`extraCommands` and the
+generated links) must run into a **build-local** directory, not a separate
+derivation. Nix store canonicalisation strips write/sticky/setuid bits when a
+tree becomes a store path, so building the staging tree as its own derivation
+silently turns `chmod 1777 tmp` into `0555`. Staging inside the main build and
+packing it before any output is registered preserves the modes.
 
 ## Base images (fromImage)
 

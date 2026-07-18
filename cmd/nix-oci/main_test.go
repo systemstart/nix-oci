@@ -1,7 +1,9 @@
 package main
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -354,6 +356,101 @@ func TestHelp(t *testing.T) {
 			t.Errorf("%s did not print the command overview: %q", arg, stdout)
 		}
 	}
+}
+
+func TestOwnFlagParse(t *testing.T) {
+	t.Parallel()
+
+	ok := map[string]oci.OwnershipRule{
+		"home/nonroot:65532:65532":   {Path: "home/nonroot", UID: 65532, GID: 65532},
+		"home/nonroot:1000:1000:r":   {Path: "home/nonroot", UID: 1000, GID: 1000, Recursive: true},
+		"weird:path:0:0":             {Path: "weird:path", UID: 0, GID: 0},
+		"opt/app/data/cache:33:33:R": {Path: "opt/app/data/cache", UID: 33, GID: 33, Recursive: true},
+	}
+	for in, want := range ok {
+		var f ownFlag
+		if err := f.Set(in); err != nil {
+			t.Errorf("Set(%q) errored: %v", in, err)
+
+			continue
+		}
+
+		if len(f) != 1 || f[0] != want {
+			t.Errorf("Set(%q) = %+v, want %+v", in, f, want)
+		}
+	}
+
+	for _, in := range []string{"", "a:b", "path:notanint:0", "path:0:notanint", ":0:0"} {
+		var f ownFlag
+		if err := f.Set(in); err == nil {
+			t.Errorf("Set(%q) should have errored, got %+v", in, f)
+		}
+	}
+}
+
+// TestBuildOwnership drives --own end to end: a non-root path in the custom
+// layer carries the assigned uid/gid, while a sibling stays root.
+func TestBuildOwnership(t *testing.T) {
+	t.Parallel()
+
+	custom := t.TempDir()
+	for _, dir := range []string{"etc", "home/nonroot"} {
+		if err := os.MkdirAll(filepath.Join(custom, dir), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+
+	out := filepath.Join(t.TempDir(), "img")
+	if _, stderr, err := runCLI(t, "", "build", "--output", out,
+		"--custom-layer", custom,
+		"--own", "home/nonroot:65532:65532:r",
+	); err != nil {
+		t.Fatalf("build: %v (%s)", err, stderr)
+	}
+
+	owners := customLayerOwners(t, out)
+	if got := owners["home/nonroot/"]; got != [2]int{65532, 65532} {
+		t.Errorf("home/nonroot/ owner = %v, want [65532 65532]", got)
+	}
+
+	if got := owners["etc/"]; got != [2]int{0, 0} {
+		t.Errorf("etc/ owner = %v, want [0 0]", got)
+	}
+}
+
+// customLayerOwners decodes the topmost layer of a single-manifest layout and
+// returns each tar entry's [uid, gid].
+func customLayerOwners(t *testing.T, layoutDir string) map[string][2]int {
+	t.Helper()
+
+	md := manifestDescriptor(t, layoutDir, "latest")
+	manifest := readBlob[oci.Manifest](t, layoutDir, string(md.Digest))
+	top := manifest.Layers[len(manifest.Layers)-1]
+
+	hexDigest, _ := strings.CutPrefix(string(top.Digest), "sha256:")
+	f, err := os.Open(filepath.Join(layoutDir, "blobs", "sha256", hexDigest))
+	if err != nil {
+		t.Fatalf("open layer: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+
+	owners := make(map[string][2]int)
+	tr := tar.NewReader(gz)
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+
+		owners[h.Name] = [2]int{h.Uid, h.Gid}
+	}
+
+	return owners
 }
 
 // readJSON reads and unmarshals a JSON file into T.
