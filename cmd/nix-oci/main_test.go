@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/systemstart/nix-oci/internal/oci"
 )
@@ -480,4 +481,50 @@ func readBlob[T any](t *testing.T, layoutDir, digest string) T {
 	}
 
 	return readJSON[T](t, filepath.Join(layoutDir, "blobs", "sha256", hexDigest))
+}
+
+// TestCreatedFlag covers both accepted spellings -- RFC3339 and epoch seconds,
+// the latter because a flake's self.lastModified already is epoch seconds --
+// and checks a bad value is rejected rather than silently ignored.
+func TestCreatedFlag(t *testing.T) {
+	t.Parallel()
+
+	want := time.Date(2026, 8, 28, 10, 0, 0, 0, time.UTC)
+
+	for _, tc := range []struct{ name, value string }{
+		{"rfc3339", "2026-08-28T10:00:00Z"},
+		{"epoch-seconds", strconv.FormatInt(want.Unix(), 10)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := fakeStore(t)
+			out := filepath.Join(t.TempDir(), "img")
+
+			if _, stderr, err := runCLI(t, root, "build", "--output", out,
+				"--created", tc.value,
+			); err != nil {
+				t.Fatalf("build: %v (%s)", err, stderr)
+			}
+
+			md := manifestDescriptor(t, out, "latest")
+			manifest := readBlob[oci.Manifest](t, out, string(md.Digest))
+			config := readBlob[oci.Config](t, out, string(manifest.Config.Digest))
+
+			if config.Created == nil || !config.Created.Equal(want) {
+				t.Errorf("created = %v, want %v", config.Created, want)
+			}
+		})
+	}
+
+	t.Run("rejects-garbage", func(t *testing.T) {
+		t.Parallel()
+
+		root := fakeStore(t)
+		out := filepath.Join(t.TempDir(), "img")
+
+		if _, _, err := runCLI(t, root, "build", "--output", out, "--created", "yesterday"); err == nil {
+			t.Error("expected an error for an unparseable --created")
+		}
+	})
 }

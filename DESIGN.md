@@ -146,7 +146,14 @@ working-dir, user, exposed-ports, volumes, labels, and stop-signal. Provenance
 lives in **manifest annotations** (`org.opencontainers.image.*` — source,
 revision, version, …) rather than config labels, per OCI convention; when a base
 image is used, `org.opencontainers.image.base.digest` is emitted automatically.
-`created` stays pinned at epoch for reproducibility.
+`created` defaults to the epoch for reproducibility, and is the one config field
+a caller may override (`created`, RFC3339 or epoch seconds) when a registry UI
+showing 1970 is worse than the cost. That cost is real and worth stating: the
+default makes the image a pure function of its content, so two commits that
+build identical content produce one digest and a registry dedups them. Any
+non-epoch value forfeits that. The override is deliberately scoped to the config
+blob — tar mtimes stay at the epoch unconditionally — so layer blobs keep their
+digests and stay shareable across images stamped differently.
 
 ## Layering
 

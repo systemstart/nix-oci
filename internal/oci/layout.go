@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sync"
+	"time"
 
 	"github.com/opencontainers/go-digest"
 )
@@ -74,6 +75,33 @@ type ImageOptions struct {
 	// RefName becomes org.opencontainers.image.ref.name on the manifest
 	// descriptor in index.json -- i.e. the tag skopeo and crane select by.
 	RefName string
+
+	// Created sets the image config's `created` field and the timestamp on each
+	// history entry. Nil means the 1970 epoch, which is the default and keeps
+	// the config blob a pure function of the content.
+	//
+	// It deliberately does NOT touch tar entry mtimes: those stay at the epoch
+	// unconditionally, so setting this changes only the config blob's digest
+	// (and the manifest and index that name it). Layer blobs are untouched, and
+	// so remain shareable across images built with different timestamps.
+	//
+	// Callers wanting a registry UI to show something other than 1970 should
+	// pass a value that is a pure function of the source -- a commit timestamp,
+	// not a build clock -- or reproducibility is lost. Note that any non-nil
+	// value costs cross-commit digest equality: two commits with identical
+	// content but different timestamps will no longer produce the same image.
+	Created *time.Time
+}
+
+// createdAt is the timestamp stamped into the image config and its history.
+// Separate from epochTime (which is the tar mtime) so that the two cannot be
+// conflated: only this one is caller-controllable.
+func (o ImageOptions) createdAt() *time.Time {
+	if o.Created != nil {
+		return o.Created
+	}
+
+	return &epochTime
 }
 
 // Write emits a complete OCI image layout into dir.
@@ -296,6 +324,8 @@ func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, ha
 		StopSignal:   opts.StopSignal,
 	}
 
+	created := opts.createdAt()
+
 	var (
 		diffIDs []digest.Digest
 		history []History
@@ -304,7 +334,7 @@ func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, ha
 	if base != nil {
 		diffIDs = append(diffIDs, base.diffIDs...)
 		for range base.diffIDs {
-			history = append(history, History{Created: &epochTime, CreatedBy: "nix-oci: base image"})
+			history = append(history, History{Created: created, CreatedBy: "nix-oci: base image"})
 		}
 
 		imageConfig = mergeConfig(base.config, imageConfig)
@@ -317,11 +347,11 @@ func writeConfigBlob(blobDir string, opts ImageOptions, layers []LayerResult, ha
 		}
 
 		diffIDs = append(diffIDs, digest.Digest(layer.DiffID))
-		history = append(history, History{Created: &epochTime, CreatedBy: createdBy})
+		history = append(history, History{Created: created, CreatedBy: createdBy})
 	}
 
 	config := Config{
-		Created:  &epochTime,
+		Created:  created,
 		Platform: Platform{Architecture: opts.Architecture, OS: opts.OS},
 		Config:   imageConfig,
 		RootFS: RootFS{

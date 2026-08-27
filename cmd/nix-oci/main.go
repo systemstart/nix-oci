@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/systemstart/nix-oci/internal/oci"
 )
@@ -176,9 +177,43 @@ type imageFlags struct {
 	volumes      *string
 	stopSignal   *string
 	customLayer  *string
+	created      createdFlag
 	labels       kvFlag
 	annotations  kvFlag
 	own          ownFlag
+}
+
+// createdFlag is the image config's `created` timestamp. It accepts RFC3339
+// ("2026-08-28T10:00:00Z") or epoch seconds ("1787814960") -- the latter
+// because a flake's `self.lastModified` already is epoch seconds, so callers
+// need no conversion. Unset leaves the writer on its 1970 default.
+type createdFlag struct{ t *time.Time }
+
+func (f *createdFlag) String() string {
+	if f == nil || f.t == nil {
+		return ""
+	}
+
+	return f.t.Format(time.RFC3339)
+}
+
+func (f *createdFlag) Set(s string) error {
+	if secs, err := strconv.ParseInt(s, 10, 64); err == nil {
+		t := time.Unix(secs, 0).UTC()
+		f.t = &t
+
+		return nil
+	}
+
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return fmt.Errorf("want RFC3339 or epoch seconds, got %q", s)
+	}
+
+	utc := t.UTC()
+	f.t = &utc
+
+	return nil
 }
 
 func registerImageFlags(fs *flag.FlagSet) *imageFlags {
@@ -199,6 +234,7 @@ func registerImageFlags(fs *flag.FlagSet) *imageFlags {
 		annotations:  kvFlag{},
 	}
 
+	fs.Var(&f.created, "created", "image config `created` timestamp: RFC3339 or epoch seconds (default 1970, for reproducibility)")
 	fs.Var(f.labels, "label", "config label KEY=VALUE (repeatable)")
 	fs.Var(f.annotations, "annotation", "manifest annotation KEY=VALUE, e.g. org.opencontainers.image.source (repeatable)")
 	fs.Var(&f.own, "own", "set ownership of a custom-layer path: PATH:UID:GID[:r] for recursive (repeatable)")
@@ -223,6 +259,7 @@ func (f *imageFlags) options() oci.ImageOptions {
 		Ownership:    f.own,
 		Labels:       nilIfEmpty(f.labels),
 		Annotations:  nilIfEmpty(f.annotations),
+		Created:      f.created.t,
 	}
 }
 

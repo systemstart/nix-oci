@@ -36,6 +36,9 @@
   labels ? { },
   stopSignal ? "",
   annotations ? { },
+  # See build-image.nix. Affects the config blob only, so the cached layer
+  # blobs this path exists to reuse stay valid across timestamp changes.
+  created ? null,
   arch ? "amd64",
   os ? "linux",
   ref ? "latest",
@@ -100,6 +103,7 @@ let
     (scalarFlag "stop-signal" stopSignal)
     (mapFlag "label" labels)
     (mapFlag "annotation" annotations)
+    (scalarFlag "created" (if created == null then "" else toString created))
   ];
 
   rootLinkCmds = lib.concatStringsSep "\n" (

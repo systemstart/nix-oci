@@ -31,6 +31,17 @@
   # Manifest annotations (an attrset of KEY = "value"), e.g.
   # { "org.opencontainers.image.source" = "https://…"; }.
   annotations ? { },
+  # Image config `created` timestamp: RFC3339, or epoch seconds (which is what
+  # a flake's `self.lastModified` already is). null keeps the 1970 default.
+  #
+  # Only the config blob is affected -- tar entry mtimes stay at the epoch, so
+  # layer blobs are unchanged and stay shareable between images built with
+  # different timestamps. Pass something derived from the source (a commit
+  # timestamp), never a build clock, or the build stops being reproducible.
+  # Be aware that any non-null value costs cross-commit digest equality: two
+  # commits with identical content but different timestamps stop producing the
+  # same image.
+  created ? null,
   arch ? "amd64",
   os ? "linux",
   ref ? "latest",
@@ -98,6 +109,7 @@ let
     (scalarFlag "stop-signal" stopSignal)
     (mapFlag "label" labels)
     (mapFlag "annotation" annotations)
+    (scalarFlag "created" (if created == null then "" else toString created))
   ];
 
   # With no store paths, feed an empty closure and skip the graph.

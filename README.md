@@ -237,6 +237,7 @@ name; the headline difference is the output — a standard OCI layout you push w
 | `extraCommands` | `extraCommands` (files at the image root, root-owned by default) |
 | `fakeRootCommands` (e.g. `chown -R 1000 /home/app`) | `chown = [ { path = "home/app"; uid = 1000; gid = 1000; recursive = true; } ];` — declared, not run under fakeroot |
 | `maxLayers` | `maxLayers` |
+| `created` (defaults to a real build clock) | `created` — opt-in, defaults to the 1970 epoch; see [below](#image-created-timestamp) |
 | **output**: docker-archive (`docker load`) | **output**: OCI layout (`skopeo copy` / `crane push`, no daemon) |
 
 ## Consuming the layout
@@ -266,6 +267,42 @@ archive directly (it wants the legacy `docker save` format) — pipe through
 skopeo as above. Docker with the containerd image store accepts OCI archives
 natively. See the [consumption matrix](./DESIGN.md#consumption) for the full
 detail, including the environment-blocked rows.
+
+### Image `created` timestamp
+
+By default the image config's `created` is the 1970 epoch, so the config blob is
+a pure function of the content. Registry UIs render that as "56 years ago" with
+no vendor, which is cosmetically poor but honest.
+
+Set `created` if you want a real date. It takes RFC3339 or epoch seconds — the
+latter because a flake's `self.lastModified` already is epoch seconds:
+
+```nix
+buildOCIImage {
+  name = "app";
+  contents = [ app ];
+  created = self.lastModified;          # or "2026-08-27T09:56:00Z"
+  labels = {
+    "org.opencontainers.image.vendor" = "example";
+    "org.opencontainers.image.revision" = self.rev or self.dirtyRev or "dev";
+  };
+}
+```
+
+Two things to know before you set it:
+
+- It moves **only the config blob**. Tar entry mtimes stay at the epoch, so
+  layer blobs keep their digests and stay shareable in a registry between
+  images built with different timestamps.
+- It costs cross-commit digest equality. Today two commits with identical
+  content produce the same image, so a registry dedups them and a re-push can
+  be skipped. With `created = self.lastModified`, every commit yields a new
+  digest whether or not anything in the image changed. That is why the default
+  stays at the epoch.
+
+Pass something derived from the source — a commit timestamp — never a build
+clock, or the build stops being reproducible. Note `self.lastModified` on a
+dirty tree is the working-tree mtime, so local builds will churn.
 
 ## Reproducibility
 
