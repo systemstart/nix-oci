@@ -65,12 +65,21 @@ release: lint test build
 # the goreleaser artifact, and the tag all report the same version. The chore
 # commit is a non-bumping type, so it does not skew the next gsemver bump.
 # Override the version with `make release-tag VERSION=1.2.3`.
+#
+# The tag is signed with -s. tag.forcesignannotated does NOT achieve this: git
+# gives an explicit --annotate/-a precedence over that config, so `git tag -a`
+# produces an unsigned tag however the config is set.
 release-tag:
 	$(eval VERSION ?= $(shell gsemver bump))
+	@git config --get user.signingkey >/dev/null || { \
+		echo "user.signingkey is unset — the signed tag would fail after the" >&2; \
+		echo "release commit was already made, leaving a half-cut release." >&2; \
+		exit 1; \
+	}
 	@printf '%s\n' "$(VERSION)" > VERSION
 	git add VERSION
 	git commit -m "chore: release v$(VERSION)" VERSION
-	git tag -a "v$(VERSION)" -m "Release v$(VERSION)"
+	git tag -s "v$(VERSION)" -m "Release v$(VERSION)"
 	git push origin HEAD "v$(VERSION)"
 
 clean:
