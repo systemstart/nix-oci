@@ -26,8 +26,78 @@ archives:
 
 changelog:
   sort: asc
+  # Short SHAs; the default prints all 40 characters, which drowns the subject.
+  abbrev: 7
   filters:
+    # Merge commits only. Type-based excludes (docs/test/ci/chore) are
+    # deliberately absent: they empty the changelog entirely on a release that
+    # happens to contain nothing else, which is how nix-compose once shipped a
+    # bare `## Changelog` heading. Grouping keeps the noise out of the way
+    # instead -- anything that is not breaking, a feat or a fix lands under
+    # "Other changes", visible but last.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^ci:"
+      - "^Merge pull request"
+  # goreleaser has no notion of a breaking change, so it is a group like any
+  # other, matched on the conventional-commit `!`. It sits first because a
+  # reader deciding whether to upgrade needs it before anything else.
+  #
+  # Note the changelog renders commit *subjects* only -- never bodies. A
+  # BREAKING-CHANGE footer will not appear here, so the subject has to carry
+  # enough, and the specifics belong in `release.header` for that release.
+  groups:
+    - title: Breaking changes
+      regexp: '^.*?[[:word:]]+(\([[:word:]]+\))?!:.+$'
+      order: 0
+    - title: Features
+      regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
+      order: 1
+    - title: Fixes
+      regexp: '^.*?fix(\([[:word:]]+\))??!?:.+$'
+      order: 2
+    - title: Other changes
+      order: 999
+
+release:
+  github:
+    owner: systemstart
+    name: nix-oci
+  # "auto" marks a release as a pre-release only when the tag carries a semver
+  # pre-release identifier (v0.4.0-rc1). A plain v0.4.0 is a full release.
+  prerelease: auto
+  # The commit list below says what changed, never what the thing is. Anyone
+  # arriving here from a search result sees this first, so it has to stand alone.
+  header: |
+    A native, deterministic OCI image layout writer for Nix.
+
+    Give it a Nix closure, get a spec-compliant OCI image any tool can consume —
+    layered for registry dedup and daemon-free. Unlike `dockerTools` (legacy
+    `docker save` format) or `nix2container` (a non-standard description needing
+    its own transport), the output is a plain OCI artifact with nothing else in
+    the loop.
+
+    ## Install
+
+    ```sh
+    nix run github:systemstart/nix-oci -- --help
+    # or
+    go install github.com/systemstart/nix-oci/cmd/nix-oci@latest
+    ```
+
+    Or download an archive below (Linux and macOS, amd64 and arm64). Most users
+    never invoke the CLI directly: the flake exposes `buildOCIImage`,
+    `buildOCIImageCached` and `buildOCIMultiArch`, which wrap it.
+
+    ## Reproducibility
+
+    Identical inputs produce byte-identical output at every level — layer,
+    config, manifest, index. [DESIGN.md](https://github.com/systemstart/nix-oci/blob/main/DESIGN.md#determinism)
+    documents the levers that make that hold, and what would break it.
+  footer: |
+
+    ---
+
+    While the major version is 0, the Nix builder arguments and the CLI surface
+    may still change between minor releases.
+
+    Archives are attested with build provenance; verify with
+    `gh attestation verify <archive> --repo systemstart/nix-oci`.
