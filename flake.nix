@@ -38,11 +38,16 @@
                 "main.version=${version}"
               ];
 
+              # Kept in sync with pkgs/by-name/ni/nix-oci/package.nix in nixpkgs.
+              # `description` deliberately has no leading article: nixpkgs' meta
+              # lint rejects one.
               meta = {
-                description = "A native, deterministic OCI image layout writer for Nix";
+                description = "Native, deterministic OCI image layout writer for Nix";
                 homepage = "https://github.com/systemstart/nix-oci";
+                changelog = "https://github.com/systemstart/nix-oci/releases/tag/v${version}";
                 license = pkgs.lib.licenses.gpl3Only;
                 mainProgram = "nix-oci";
+                platforms = pkgs.lib.platforms.unix;
               };
             };
         });
