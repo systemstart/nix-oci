@@ -10,18 +10,8 @@
     in
     {
       packages = forAllSystems (pkgs:
-        let
-          # Pinned toolchain. Deliberately NOT applied as an overlay: overriding
-          # pkgs.go globally would rebuild gopls, gotools and golangci-lint from
-          # source and lose every binary-cache hit for them.
-          go = pkgs.callPackage ./nix/go-bin.nix { };
-
-          buildGoModule = pkgs.buildGoModule.override { inherit go; };
-        in
         {
           default = self.packages.${pkgs.stdenv.hostPlatform.system}.nix-oci;
-
-          inherit go;
 
           nix-oci =
             let
@@ -31,7 +21,11 @@
               # It names the Nix package and stamps the binary (via ldflags).
               version = pkgs.lib.fileContents ./VERSION;
             in
-            buildGoModule {
+            # Pinned to a Go *minor*, not the default toolchain: gzip at
+            # BestCompression makes the compressor version digest-affecting
+            # (see DESIGN.md), and compress/flate output has changed between
+            # minors before. Patch bumps within 1.26 are taken as they land.
+            (pkgs.buildGoModule.override { go = pkgs.go_1_26; }) {
               pname = "nix-oci";
               inherit version;
               src = ./.;
@@ -157,10 +151,11 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = [
-            self.packages.${pkgs.stdenv.hostPlatform.system}.go
-          ]
-          ++ (with pkgs; [
+          packages = (with pkgs; [
+            # Same minor the derivation builds with -- the compressor version
+            # is digest-affecting, so developing against a different Go would
+            # produce layers that do not match a Nix build.
+            go_1_26
             gopls
             gotools
 

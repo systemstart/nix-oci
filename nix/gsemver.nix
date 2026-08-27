@@ -1,7 +1,7 @@
 # gsemver: conventional-commit-driven semantic version bumping, used by
 # `make release-tag` to compute the next tag. Not packaged in nixpkgs, so it is
-# fetched from upstream's prebuilt release tarballs -- the same approach as
-# nix/go-bin.nix.
+# fetched from upstream's prebuilt release tarballs. This is a dev-shell-only
+# dependency and never enters the built package.
 {
   lib,
   stdenv,

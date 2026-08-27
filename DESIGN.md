@@ -51,7 +51,6 @@ nix/
   build-image.nix         buildOCIImage (closureInfo -> writer)
   build-image-cached.nix  buildOCIImageCached (explicit cached layers)
   build-multiarch.nix     buildOCIMultiArch
-  go-bin.nix              pinned Go toolchain (digest-affecting; see below)
 ```
 
 The writer is **Go** because the conformance oracle (umoci) and primary
@@ -96,9 +95,19 @@ whole chain and defeats registry dedup. The writer pins every lever:
   layer digest host-dependent, so `/nix` and `/nix/store` are emitted at 0755
   unconditionally. This is a genuine reproducibility trap and easy to miss.
 - **Compression** is Go's `compress/gzip` at `BestCompression`. That makes the
-  *Go version* digest-affecting, so `nix/go-bin.nix` pins the toolchain (Go
-  1.26.5, from upstream prebuilt tarballs), and the binary is built
-  `CGO_ENABLED=0`, statically linked.
+  *Go version* digest-affecting, so the flake pins a Go **minor** —
+  `buildGoModule.override { go = pkgs.go_1_26; }`, with the dev shell on the
+  same toolchain — and the binary is built `CGO_ENABLED=0`, statically linked.
+  `compress/flate` output has changed between minors before; patch bumps within
+  the minor are taken as they land, on the assumption they do not move the
+  compressor. Pinning the minor rather than the patch is what lets the package
+  live in nixpkgs, which does not accept a prebuilt toolchain download.
+
+  Consequence worth stating plainly: a nix-oci **installed from nixpkgs** is
+  built with whatever Go that nixpkgs revision defaults to, so it carries no
+  cross-revision digest guarantee. Only the flake, whose `nixpkgs` input is
+  locked, promises that two machines produce identical digests. Builds that
+  must be reproducible should use the flake, not the nixpkgs package.
 
 Acceptance test: build the same image twice on different machines and `diff -r`
 — digests must be identical. `make repro` checks this on one machine (Nix

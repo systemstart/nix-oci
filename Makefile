@@ -23,7 +23,7 @@ build:
 
 # Runs tests with coverage and fails if total coverage drops below
 # COVERAGE_THRESHOLD. -race is intentionally omitted: the writer builds with
-# CGO_ENABLED=0 (nix/go-bin.nix) and the race detector needs cgo.
+# CGO_ENABLED=0 and the race detector needs cgo.
 test:
 	$(GO) test -coverprofile=$(COVERPROFILE) ./...
 	@total=$$($(GO) tool cover -func=$(COVERPROFILE) | awk '/^total:/ {gsub(/%/,"",$$NF); print $$NF}'); \
