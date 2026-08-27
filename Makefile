@@ -71,6 +71,13 @@ release: lint test build
 # produces an unsigned tag however the config is set.
 release-tag:
 	$(eval VERSION ?= $(shell gsemver bump))
+	@test -n "$(VERSION)" || { \
+		echo "gsemver produced no version — refusing to tag." >&2; \
+		echo "make hides a failing command inside its shell function, and an empty" >&2; \
+		echo "version would tag and push a ref literally named v. Check the remote" >&2; \
+		echo "is reachable and gsemver is on PATH." >&2; \
+		exit 1; \
+	}
 	@git config --get user.signingkey >/dev/null || { \
 		echo "user.signingkey is unset — the signed tag would fail after the" >&2; \
 		echo "release commit was already made, leaving a half-cut release." >&2; \
