@@ -8,7 +8,7 @@ COVERAGE_THRESHOLD ?= 80
 NIX_SYSTEM         ?= $(shell nix eval --raw --impure --expr builtins.currentSystem)
 EXAMPLE_IMAGE      ?= .\#checks.$(NIX_SYSTEM).exampleImage
 
-.PHONY: all build test cover fmt lint hooks repro release release-tag clean
+.PHONY: all build test cover fmt lint hooks repro release release-notes release-tag release-tag-preview clean
 
 all: build
 
@@ -55,8 +55,27 @@ repro:
 # Builds and publishes a release from the current tag. Invoked by CI on tag
 # push; needs GITHUB_TOKEN and a clean tagged tree. Re-runs the gates first so a
 # local `make release` matches what CI enforces.
+# Release notes come from git-cliff (see cliff.toml), not from goreleaser:
+# goreleaser's changelog only ever sees commit subjects, so a BREAKING CHANGE
+# footer could not reach the release page. --release-notes replaces the body
+# entirely, which is why cliff.toml carries the header and footer too.
 release: lint test build
-	goreleaser release --clean
+	@notes="$$(mktemp)"; \
+	git-cliff --latest > "$$notes" || { rm -f "$$notes"; exit 1; }; \
+	goreleaser release --clean --release-notes "$$notes"; \
+	rc=$$?; rm -f "$$notes"; exit $$rc
+
+# Preview the release notes for the current tag without releasing anything.
+release-notes:
+	@git-cliff --latest
+
+# Preview the version `release-tag` would cut, without touching anything.
+# gsemver derives it from the conventional-commit history since the last tag,
+# and it fetches, so this needs network access to the remote.
+release-tag-preview:
+	@v="$$(gsemver bump)"; \
+	test -n "$$v" || { echo "gsemver produced no version — is the remote reachable?" >&2; exit 1; }; \
+	printf "next tag: v%s\n" "$$v"
 
 # Computes the next version from conventional-commit history, writes it into
 # ./VERSION (the source of truth the flake reads), commits that as the release

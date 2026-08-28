@@ -170,6 +170,9 @@
 
             # Release tooling (see `make release` / `make release-tag`).
             goreleaser
+            # Generates the release notes (cliff.toml) that `make release`
+            # hands to goreleaser via --release-notes.
+            git-cliff
             (pkgs.callPackage ./nix/gsemver.nix { })
 
             # Conformance oracles and consumers (see the consumption matrix).
