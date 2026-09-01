@@ -8,7 +8,7 @@ COVERAGE_THRESHOLD ?= 80
 NIX_SYSTEM         ?= $(shell nix eval --raw --impure --expr builtins.currentSystem)
 EXAMPLE_IMAGE      ?= .\#checks.$(NIX_SYSTEM).exampleImage
 
-.PHONY: all build test cover fmt lint hooks repro release release-notes release-tag release-tag-preview clean
+.PHONY: all build test cover fmt lint hooks repro diff-closures release release-notes release-tag release-tag-preview clean
 
 all: build
 
@@ -51,6 +51,17 @@ lint:
 repro:
 	nix build $(EXAMPLE_IMAGE) --no-link
 	nix build --rebuild $(EXAMPLE_IMAGE) --no-link
+
+# What did the last `nix flake update` actually change? Rebuilds an attribute
+# against the nixpkgs revision committed at HEAD and diffs the two closures --
+# the lock diff alone only says a revision moved, not whether the move reaches
+# anything we build. Evaluation-only unless the derivations differ.
+#
+# The Go toolchain is no longer one of nixpkgs' packages, so there is nothing
+# useful to pass to -p here: roll back the toolchain input instead, with
+# ARGS='-i go-overlay'. Other examples: ARGS='-a checks.x86_64-linux.exampleImage'.
+diff-closures:
+	@scripts/diff-closures.sh $(ARGS)
 
 # Builds and publishes a release from the current tag. Invoked by CI on tag
 # push; needs GITHUB_TOKEN and a clean tagged tree. Re-runs the gates first so a
