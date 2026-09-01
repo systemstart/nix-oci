@@ -51,7 +51,8 @@ nix run github:systemstart/nix-oci -- version
 ```
 
 From a clone, `nix build .#nix-oci`, or `go build ./cmd/nix-oci` if you already
-have Go 1.26.5.
+have Go 1.27. Note that a hand-built binary may compress differently from the
+pinned toolchain — see [Development](#development).
 
 ## Usage
 
@@ -318,7 +319,7 @@ modes, a pinned Go/gzip toolchain — are detailed in
 Everything runs through the pinned Nix dev shell:
 
 ```sh
-nix develop            # pinned Go 1.26 + golangci-lint + goreleaser + git-cliff + oci tooling
+nix develop            # pinned Go 1.27.0 + golangci-lint + goreleaser + git-cliff + oci tooling
 make build             # go build ./...
 make test              # tests + coverage, fails under 80%
 make lint              # golangci-lint run

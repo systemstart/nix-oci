@@ -3,10 +3,40 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-  outputs = { self, nixpkgs }:
+  # The Go toolchain comes from go-overlay rather than nixpkgs: it tracks go.dev
+  # directly (every patch and RC, within hours of release), so the toolchain is
+  # never gated on nixpkgs' packaging schedule -- nixpkgs' default `go` still
+  # lags a new minor by weeks, and `go_1_XX` attributes only appear once someone
+  # packages them. Verified digest-neutral: an image built with go-overlay's
+  # 1.26.7 and with nixpkgs' source-built 1.26.7 has the same manifest digest,
+  # so the compressor output tracks the Go *version*, not the build path.
+  inputs.go-overlay.url = "github:purpleclay/go-overlay";
+  inputs.go-overlay.inputs.nixpkgs.follows = "nixpkgs";
+
+  outputs = { self, nixpkgs, go-overlay }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f nixpkgs.legacyPackages.${system});
+
+      # The exact Go release every build and dev shell uses. gzip at
+      # BestCompression makes the compressor digest-affecting (see DESIGN.md),
+      # so this is a pin, not a floor: moving it moves every image digest we
+      # produce, which is why it is one literal in one place and why
+      # TestGoldenLayerDigest fails when it changes.
+      #
+      # Renovate proposes bumps from the golang-version datasource (see
+      # renovate.json); go-overlay guarantees the version exists by the time the
+      # PR opens, so the update can never outrun what Nix can provide.
+      # renovate: datasource=golang-version depName=go
+      goVersion = "1.27.0";
+
+      # Scoped deliberately: the overlay is applied to a throwaway nixpkgs
+      # instance used only to pull the toolchain out, so nothing else in this
+      # flake is evaluated against a modified package set.
+      goToolchain = system: (import nixpkgs {
+        inherit system;
+        overlays = [ go-overlay.overlays.default ];
+      }).go-bin.versions.${goVersion};
     in
     {
       packages = forAllSystems (pkgs:
@@ -21,11 +51,13 @@
               # It names the Nix package and stamps the binary (via ldflags).
               version = pkgs.lib.fileContents ./VERSION;
             in
-            # Pinned to a Go *minor*, not the default toolchain: gzip at
-            # BestCompression makes the compressor version digest-affecting
+            # Pinned to one exact Go release, not the default toolchain: gzip
+            # at BestCompression makes the compressor version digest-affecting
             # (see DESIGN.md), and compress/flate output has changed between
-            # minors before. Patch bumps within 1.26 are taken as they land.
-            (pkgs.buildGoModule.override { go = pkgs.go_1_26; }) {
+            # releases before. The version is `goVersion` above.
+            (pkgs.buildGoModule.override {
+              go = goToolchain pkgs.stdenv.hostPlatform.system;
+            }) {
               pname = "nix-oci";
               inherit version;
               src = ./.;
@@ -156,11 +188,12 @@
 
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
-          packages = (with pkgs; [
-            # Same minor the derivation builds with -- the compressor version
-            # is digest-affecting, so developing against a different Go would
-            # produce layers that do not match a Nix build.
-            go_1_26
+          packages = [
+            # The exact release the derivation builds with -- the compressor
+            # version is digest-affecting, so developing against a different Go
+            # would produce layers that do not match a Nix build.
+            (goToolchain pkgs.stdenv.hostPlatform.system)
+          ] ++ (with pkgs; [
             gopls
             gotools
 

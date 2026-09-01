@@ -42,6 +42,39 @@
         "nixpkgs"
       ],
       "commitMessageExtra": "({{{newVersion}}})"
+    },
+    {
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "commitMessagePrefix": "build(deps):",
+      "prBodyNotes": [
+        "This moves the Go release the images are compressed with, so **every image digest changes**.",
+        "`TestGoldenLayerDigest` fails by design: update its two constants in this PR, and say in the release notes that consumers pinning by digest must re-pull."
+      ]
+    },
+    {
+      "matchManagers": [
+        "nix"
+      ],
+      "matchPackageNames": [
+        "go-overlay"
+      ],
+      "commitMessagePrefix": "chore(deps):",
+      "commitMessageExtra": "({{{newVersion}}})"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The Go release pinned in flake.nix and provided by go-overlay. Moving it re-digests every image nix-oci writes (DESIGN.md), so it is proposed as its own PR rather than riding along with a nixpkgs bump.",
+      "managerFilePatterns": [
+        "/^flake\\.nix$/"
+      ],
+      "matchStrings": [
+        "#\\s*renovate:\\s*datasource=(?<datasource>\\S+)\\s+depName=(?<depName>\\S+)\\s*\\n\\s*goVersion\\s*=\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "versioningTemplate": "semver"
     }
   ]
 }

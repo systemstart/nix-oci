@@ -95,16 +95,35 @@ whole chain and defeats registry dedup. The writer pins every lever:
   layer digest host-dependent, so `/nix` and `/nix/store` are emitted at 0755
   unconditionally. This is a genuine reproducibility trap and easy to miss.
 - **Compression** is Go's `compress/gzip` at `BestCompression`. That makes the
-  *Go version* digest-affecting, so the flake pins a Go **minor** —
-  `buildGoModule.override { go = pkgs.go_1_26; }`, with the dev shell on the
-  same toolchain — and the binary is built `CGO_ENABLED=0`, statically linked.
-  `compress/flate` output has changed between minors before; patch bumps within
-  the minor are taken as they land, on the assumption they do not move the
-  compressor. Pinning the minor rather than the patch is what lets the package
-  live in nixpkgs, which does not accept a prebuilt toolchain download.
+  *Go version* digest-affecting, so the flake pins **one exact Go release** —
+  `goVersion` in `flake.nix`, supplied by the `go-overlay` input, with the dev
+  shell on the same toolchain — and the binary is built `CGO_ENABLED=0`,
+  statically linked.
+
+  The pin is exact rather than a minor because `compress/flate` output moves
+  between releases and "patch bumps are safe" was an assumption, not a property.
+  Measured on the example image: Go 1.26.7 and 1.27.0 produce **identical
+  diffIDs and a different compressed blob for every single layer**, each about
+  2% larger. Gzipping one extracted layer by hand reproduces it exactly (279
+  bytes under 1.26.7, 281 under 1.27.0), as does compressing 5632 zero bytes.
+
+  The toolchain comes from go-overlay rather than nixpkgs because nixpkgs
+  packages a release when someone gets to it — its default `go` still lagged
+  1.27.0 by weeks after release — while go-overlay tracks go.dev within hours,
+  so the pin can never name a version Nix cannot supply. This is digest-neutral
+  in itself: go-overlay's 1.26.7 (an official go.dev binary) and nixpkgs'
+  source-built 1.26.7 produce the same manifest digest. What matters is the Go
+  version, not how the toolchain was built.
+
+  `TestGoldenLayerDigest` is what makes the pin enforceable. It asserts the
+  diffID and the compressed digest of a fixed tree, so a toolchain change goes
+  red with the cause spelled out — nothing else catches it, because every other
+  test compares a build against itself and CI's reproducibility job compares two
+  machines running the *same* commit.
 
   Consequence worth stating plainly: a nix-oci **installed from nixpkgs** is
-  built with whatever Go that nixpkgs revision defaults to, so it carries no
+  built with whatever Go that nixpkgs revision defaults to — a different release
+  from the flake's pin by construction, not just by accident — so it carries no
   cross-revision digest guarantee. Only the flake, whose `nixpkgs` input is
   locked, promises that two machines produce identical digests. Builds that
   must be reproducible should use the flake, not the nixpkgs package.
