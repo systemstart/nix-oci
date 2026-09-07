@@ -107,6 +107,11 @@ whole chain and defeats registry dedup. The writer pins every lever:
   2% larger. Gzipping one extracted layer by hand reproduces it exactly (279
   bytes under 1.26.7, 281 under 1.27.0), as does compressing 5632 zero bytes.
 
+  Not every bump moves the bytes — 1.27.0 to 1.27.1 left every layer digest
+  untouched — but which ones do is not predictable from the version number,
+  so each bump is measured rather than assumed. `TestGoldenLayerDigest` is
+  what does the measuring.
+
   The toolchain comes from go-overlay rather than nixpkgs because nixpkgs
   packages a release when someone gets to it — its default `go` still lagged
   1.27.0 by weeks after release — while go-overlay tracks go.dev within hours,

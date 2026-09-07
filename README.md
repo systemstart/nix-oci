@@ -319,7 +319,7 @@ modes, a pinned Go/gzip toolchain — are detailed in
 Everything runs through the pinned Nix dev shell:
 
 ```sh
-nix develop            # pinned Go 1.27.0 + golangci-lint + goreleaser + git-cliff + oci tooling
+nix develop            # pinned Go 1.27.1 + golangci-lint + goreleaser + git-cliff + oci tooling
 make build             # go build ./...
 make test              # tests + coverage, fails under 80%
 make lint              # golangci-lint run
