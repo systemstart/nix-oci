@@ -314,6 +314,27 @@ order). The determinism levers — epoch mtimes, forced ownership and parent-dir
 modes, a pinned Go/gzip toolchain — are detailed in
 [DESIGN.md](./DESIGN.md#determinism).
 
+### Does a nix-oci bump move *your* digests?
+
+The Go release is pinned because gzip at `BestCompression` makes the
+compressor digest-affecting, so a nix-oci bump may or may not re-digest the
+images you build. Rather than guess, measure it from your own repo:
+
+```sh
+nix run github:systemstart/nix-oci#diff-digests -- -r github:systemstart/nix-oci/vX.Y.Z
+# -a ATTR  image attribute (default packages.<system>.default)
+# -i INPUT input to override (default nix-oci)
+# -- ARGS  extra flags your build needs, passed to both sides (e.g. -- --impure)
+```
+
+It builds your image both ways and compares **layer digests**, which are the
+bytes the compressor produces. `diff -r` over two layouts is the wrong
+instrument and reports false positives: `--override-input` makes the flake
+dirty, so a repo stamping `self.rev` into an annotation sees its manifest
+digest move while every layer is identical. The script separates those cases
+and names the field that changed. `scripts/diff-digests.sh` documents both
+traps in full.
+
 ## Development
 
 Everything runs through the pinned Nix dev shell:

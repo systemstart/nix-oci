@@ -190,6 +190,30 @@
             };
         });
 
+      # `nix run github:systemstart/nix-oci#diff-digests -- -r <ref>` from a
+      # consumer's own repo, so answering "does this bump move my digests?"
+      # needs no checkout of this one and no hand-rolled comparison. The
+      # script explains why `diff -r` over two layouts is the wrong
+      # instrument; jq and bash are wired in here so it cannot half-run
+      # against a bare PATH.
+      apps = forAllSystems (pkgs:
+        let
+          system = pkgs.stdenv.hostPlatform.system;
+          diff-digests = pkgs.writeShellApplication {
+            name = "nix-oci-diff-digests";
+            runtimeInputs = with pkgs; [ jq diffutils coreutils ];
+            text = builtins.readFile ./scripts/diff-digests.sh;
+          };
+        in
+        {
+          diff-digests = {
+            type = "app";
+            program = "${diff-digests}/bin/nix-oci-diff-digests";
+            meta.description = "Compare image digests across two revisions of a flake input";
+          };
+          default = self.apps.${system}.diff-digests;
+        });
+
       devShells = forAllSystems (pkgs: {
         default = pkgs.mkShell {
           packages = [
